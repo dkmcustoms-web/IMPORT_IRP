@@ -44,15 +44,24 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-    [data-testid="stSidebar"] { background-color: #e8f9ff; }
-    h1 { color: #f35e40; }
-    .status-badge {
-        display: inline-block;
-        padding: 2px 10px;
-        border-radius: 12px;
-        font-size: 13px;
-        font-weight: 600;
-    }
+    /* Donker thema */
+    .stApp { background-color: #1a1a2e; color: #e0e0e0; }
+    [data-testid="stSidebar"] { background-color: #16213e; }
+    [data-testid="stSidebar"] * { color: #e0e0e0 !important; }
+    h1, h2, h3 { color: #3cceff !important; }
+    .stDataFrame { background-color: #0f3460; }
+    .stTabs [data-baseweb="tab-list"] { background-color: #16213e; }
+    .stTabs [data-baseweb="tab"] { color: #e0e0e0; }
+    .stTabs [aria-selected="true"] { background-color: #0f3460; color: #3cceff !important; }
+    .stButton > button { background-color: #3cceff; color: #1a1a2e; border: none; font-weight: 600; }
+    .stButton > button:hover { background-color: #1ab5ef; }
+    .stMetric { background-color: #16213e; border-radius: 8px; padding: 8px; }
+    .stTextArea textarea { background-color: #0f3460; color: #e0e0e0; }
+    div[data-testid="metric-container"] { background-color: #16213e; border-radius: 8px; padding: 8px; }
+    .stSuccess { background-color: #1a3a1a; }
+    .stError { background-color: #3a1a1a; }
+    .stWarning { background-color: #3a2a0a; }
+    caption { color: #888; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -116,9 +125,10 @@ def run_poll(irp: IRPClient):
         crn       = row["crn"]
         mrn       = row["mrn_found"]
 
-        # MRN al gevonden → overslaan, datum NIET updaten
+        # MRN al gevonden → overslaan, datum NIET updaten, geen poll nodig
         if mrn and mrn.strip():
             stats["skipped"] += 1
+            log.info(f"[SKIP] {container} — MRN al gevonden: {mrn}, geen poll nodig")
             results.append({
                 "DossierId": row["dossier_id"],
                 "Container": container,
@@ -126,7 +136,7 @@ def run_poll(irp: IRPClient):
                 "Status"   : "✅ MRN Gevonden",
                 "MRN"      : mrn,
                 "TSD"      : row["status_tsd"],
-                "Datum/Uur": row["last_poll"],
+                "Datum/Uur": row["last_poll"],  # datum NIET overschrijven
             })
             continue
 
