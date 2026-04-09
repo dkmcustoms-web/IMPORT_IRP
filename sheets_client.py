@@ -96,3 +96,36 @@ def update_row_mrn(ws: gspread.Worksheet, row_index: int, mrn: str, status_tsd: 
 def update_row_poll(ws: gspread.Worksheet, row_index: int, status_tsd: str):
     ws.update_cell(row_index, 5, now_str())
     ws.update_cell(row_index, 8, status_tsd)
+
+
+def save_cookie(cookie_str: str):
+    """Sla de cookie op in een apart tabblad 'Config'."""
+    ss = get_client()
+    try:
+        ws = ss.worksheet("Config")
+    except Exception:
+        ws = ss.add_worksheet(title="Config", rows=10, cols=2)
+        ws.update("A1", "KEY")
+        ws.update("B1", "VALUE")
+    # Schrijf cookie naar rij 2
+    ws.update("A2", "irp_cookie")
+    ws.update("B2", cookie_str)
+    log.info("Cookie opgeslagen in Google Sheet (Config tab)")
+
+
+def load_cookie() -> str | None:
+    """Lees de cookie uit het 'Config' tabblad."""
+    try:
+        ss = get_client()
+        ws = ss.worksheet("Config")
+        records = ws.get_all_values()
+        for row in records[1:]:
+            if len(row) >= 2 and row[0] == "irp_cookie":
+                cookie = row[1].strip()
+                if cookie:
+                    log.info("Cookie geladen uit Google Sheet")
+                    return cookie
+        return None
+    except Exception as e:
+        log.warning(f"Geen cookie gevonden in sheet: {e}")
+        return None

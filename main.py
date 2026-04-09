@@ -15,12 +15,26 @@ from sheets_client import (
     update_row_crn,
     update_row_mrn,
     update_row_poll,
+    save_cookie,
+    load_cookie,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
 API_DELAY = 1.5
+
+
+def auto_load_cookie():
+    """Laad cookie automatisch uit Google Sheet bij opstarten."""
+    if not st.session_state.get("irp_cookies"):
+        try:
+            cookie = load_cookie()
+            if cookie:
+                st.session_state["irp_cookies"] = cookie
+                log.info("Cookie automatisch geladen uit sheet")
+        except Exception as e:
+            log.warning(f"Kon cookie niet laden: {e}")
 
 st.set_page_config(
     page_title="DKM Import Dashboard",
@@ -70,7 +84,13 @@ def show_token_page():
         if cookie_str and cookie_str.strip():
             irp = IRPClient()
             irp.set_cookies(cookie_str.strip())
-            st.success("✅ Sessie opgeslagen!")
+            # Opslaan in Google Sheet voor hergebruik
+            try:
+                save_cookie(cookie_str.strip())
+                st.success("✅ Sessie opgeslagen en bewaard in Google Sheet!")
+            except Exception as e:
+                st.success("✅ Sessie opgeslagen!")
+                st.warning(f"Kon niet opslaan in sheet: {e}")
             st.rerun()
         else:
             st.warning("Voer eerst de cookie in.")
@@ -324,6 +344,7 @@ def _show_results(results: list):
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
+auto_load_cookie()
 irp = IRPClient()
 if irp.is_logged_in():
     show_dashboard()
