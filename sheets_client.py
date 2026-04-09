@@ -18,7 +18,6 @@ SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
 ]
 
-# Kolomindices (1-based voor gspread)
 COL = {
     "DOSSIER_ID" : 1,
     "CONTAINER"  : 2,
@@ -32,7 +31,6 @@ COL = {
 
 
 def get_client() -> gspread.Spreadsheet:
-    """Maak verbinding met Google Sheets via st.secrets."""
     creds = Credentials.from_service_account_info(
         st.secrets["gcp_service_account"],
         scopes=SCOPES,
@@ -47,15 +45,14 @@ def now_str() -> str:
 
 
 def ensure_headers(ws: gspread.Worksheet):
+    """Voeg CRN en STATUS_TSD kolommen toe als die nog niet bestaan."""
     headers = ws.row_values(1)
-    updates = []
     if len(headers) < 7 or headers[6].strip() == "":
-        updates.append(("G1", "CRN"))
+        ws.update_cell(1, 7, "CRN")
+        log.info("Header toegevoegd: G1 = CRN")
     if len(headers) < 8 or headers[7].strip() == "":
-        updates.append(("H1", "STATUS_TSD"))
-    for cell, val in updates:
-        ws.update(cell, val)
-        log.info(f"Header toegevoegd: {cell} = {val}")
+        ws.update_cell(1, 8, "STATUS_TSD")
+        log.info("Header toegevoegd: H1 = STATUS_TSD")
 
 
 def get_all_rows(ws: gspread.Worksheet) -> list[dict]:
@@ -79,16 +76,16 @@ def get_all_rows(ws: gspread.Worksheet) -> list[dict]:
 
 
 def update_row_crn(ws: gspread.Worksheet, row_index: int, crn: str, status_tsd: str):
-    ws.update(f"G{row_index}", [[crn]])
-    ws.update(f"H{row_index}", [[status_tsd]])
-    ws.update(f"E{row_index}", [[now_str()]])
+    ws.update_cell(row_index, 7, crn)
+    ws.update_cell(row_index, 8, status_tsd)
+    ws.update_cell(row_index, 5, now_str())
     log.info(f"Rij {row_index}: CRN={crn}, Status={status_tsd}")
 
 
 def update_row_mrn(ws: gspread.Worksheet, row_index: int, mrn: str, status_tsd: str):
-    ws.update(f"F{row_index}", [[mrn]])
-    ws.update(f"H{row_index}", [[status_tsd]])
-    ws.update(f"E{row_index}", [[now_str()]])
+    ws.update_cell(row_index, 6, mrn)
+    ws.update_cell(row_index, 8, status_tsd)
+    ws.update_cell(row_index, 5, now_str())
     ws.format(f"F{row_index}", {
         "backgroundColor": {"red": 0.72, "green": 0.96, "blue": 0.72},
         "textFormat": {"bold": True},
@@ -97,5 +94,5 @@ def update_row_mrn(ws: gspread.Worksheet, row_index: int, mrn: str, status_tsd: 
 
 
 def update_row_poll(ws: gspread.Worksheet, row_index: int, status_tsd: str):
-    ws.update(f"E{row_index}", [[now_str()]])
-    ws.update(f"H{row_index}", [[status_tsd]])
+    ws.update_cell(row_index, 5, now_str())
+    ws.update_cell(row_index, 8, status_tsd)
