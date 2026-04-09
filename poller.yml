@@ -1,0 +1,32 @@
+name: DKM Import MRN Poller
+
+on:
+  schedule:
+    - cron: "0 5-17 * * 1-5"   # Elk uur, ma-vr, 05:00–17:00 UTC (= 07:00–19:00 Belgische tijd)
+  workflow_dispatch:             # Ook handmatig triggeren via GitHub UI
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Python setup
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Installeer dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run MRN poller
+        env:
+          GCP_SERVICE_ACCOUNT_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
+          IRP_SESSION_TOKEN:        ${{ secrets.IRP_SESSION_TOKEN }}
+        run: |
+          cd scraper
+          python main.py
