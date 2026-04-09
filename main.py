@@ -30,9 +30,8 @@ API_DELAY_SECONDS = 1.5
 def run_poll():
     log.info("=== DKM Import MRN Poller gestart ===")
 
-    session_token = st.secrets["irp"]["session_token"]
-
-    irp = IRPClient(session_token)
+    # IRPClient haalt zelf username/password uit st.secrets
+    irp = IRPClient()
     ss  = get_client()
     ws  = ss.worksheet("Blad1")
 
