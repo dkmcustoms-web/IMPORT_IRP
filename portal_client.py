@@ -162,7 +162,7 @@ class IRPClient:
                 auth_code = url_match.group(1)
                 log.info("Auth code gevonden in URL ✓")
             else:
-                log.error(f"Geen auth code. HTTP {resp3.status_code}. Preview: {resp3.text[:400]}")
+                log.error(f"Geen auth code. HTTP {resp3.status_code}. URL: {resp3.url}. Headers: {dict(resp3.headers)}. Preview: {resp3.text[:500]}")
                 raise ValueError("Kon OAuth2 auth code niet ophalen.")
         else:
             auth_code = code_match.group(1)
