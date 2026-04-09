@@ -118,12 +118,24 @@ class IRPClient:
         cb_types = [c["type"] for c in data.get("callbacks", [])]
         log.info(f"Wacht op OTP. Callbacks: {cb_types}")
 
+        # De goto URL is de OAuth2 authorize URL die ForgeRock na login gebruikt
+        goto_url = (
+            "https://login.portofantwerpbruges.com/poam/oauth2/authorize"
+            f"?client_id=nxtport_irp"
+            f"&redirect_uri={REDIRECT_URI}"
+            f"&response_type=code"
+            f"&scope=openid+email+profile"
+            f"&response_mode=form_post"
+            f"&nonce={nonce}"
+        )
+
         return {
             "auth_id"  : data["authId"],
             "callbacks": data["callbacks"],
             "cookies"  : cookies,
             "auth_url" : auth_url,
             "nonce"    : nonce,
+            "goto_url" : goto_url,
         }
 
     def complete_login(self, login_state: dict, otp_code: str) -> bool:
@@ -150,34 +162,30 @@ class IRPClient:
 
         log.info("tokenId ontvangen ✓")
 
-        # OAuth2 authorize → auth code via form_post
-        oauth_url = (
-            "https://login.portofantwerpbruges.com/poam/oauth2/authorize"
-            f"?client_id=nxtport_irp"
-            f"&redirect_uri={REDIRECT_URI}"
-            f"&response_type=code"
-            f"&scope=openid+email+profile"
-            f"&response_mode=form_post"
-            f"&nonce={nonce}"
-        )
-
-        log.info(f"OAuth2 URL: {oauth_url[:150]}")
-        log.info(f"Cookies: {list(cookies.keys())}")
-
+        # ForgeRock redirect opvolgen via de successUrl
+        # Na succesvolle login geeft ForgeRock een successUrl terug
+        # OF we halen de goto URL op via de session endpoint
+        session_url = f"https://login.portofantwerpbruges.com/poam/json/realms/root/realms/portofantwerpbruges/sessions/{token_id}?_action=getProperty&_prettyPrint=true"
+        
+        # Gebruik de tokenId als cookie en volg de goto redirect
         all_cookies = {**cookies, "iPlanetDirectoryPro": token_id}
-        log.info(f"Alle cookies voor OAuth2: {list(all_cookies.keys())}")
+        
+        # Haal de goto URL op die we meegaven bij stap 1
+        goto_url = login_state.get("goto_url")
+        log.info(f"Goto URL: {goto_url[:150] if goto_url else 'niet opgeslaan'}")
+        
         resp3 = requests.get(
-            oauth_url,
+            goto_url,
             headers={
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0",
                 "Accept": "text/html,application/xhtml+xml",
-                "Cookie": "; ".join(f"{k}={v}" for k, v in all_cookies.items()),
             },
+            cookies=all_cookies,
             allow_redirects=True,
             timeout=15,
         )
-        log.info(f"OAuth2 → HTTP {resp3.status_code}, finale URL: {resp3.url[:150]}")
-        log.info(f"OAuth2 response (eerste 1000 chars): {resp3.text[:1000]}")
+        log.info(f"Goto → HTTP {resp3.status_code}, finale URL: {resp3.url[:150]}")
+        log.info(f"Response preview: {resp3.text[:500]}")
 
         # Auth code zoeken in HTML form
         code_match = re.search(r'name="code"\s+value="([^"]+)"', resp3.text)
@@ -187,7 +195,7 @@ class IRPClient:
                 auth_code = url_match.group(1)
                 log.info("Auth code gevonden in URL ✓")
             else:
-                log.error(f"Geen auth code. Status: {resp3.status_code}")
+                log.error(f"Geen auth code. Status: {resp3.status_code}. Preview: {resp3.text[:300]}")
                 raise ValueError("Kon OAuth2 auth code niet ophalen.")
         else:
             auth_code = code_match.group(1)
