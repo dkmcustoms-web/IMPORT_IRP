@@ -1,9 +1,11 @@
 """
 DKM Import Release Dashboard — IRP NxtPort API Client
 Login via ForgeRock met e-mail verificatiecode (MFA)
+Twee-staps flow waarbij de sessie bewaard wordt via pickle in session_state
 """
 
 import logging
+import pickle
 import re
 import requests
 import streamlit as st
@@ -14,14 +16,30 @@ log = logging.getLogger(__name__)
 BASE_URL       = "https://api.irp.nxtport.com/irp-bff/v1"
 FORGEROCK_BASE = "https://login.portofantwerpbruges.com/poam/json/realms/root/realms/portofantwerpbruges"
 AUTH_SERVICE   = "GlobalAuthenticationPolicyLevel25_poab"
-GOTO_URL       = (
-    "https://login.portofantwerpbruges.com:443/poam/oauth2/authorize"
+AUTH_URL       = (
+    f"{FORGEROCK_BASE}/authenticate"
+    f"?authIndexType=service&authIndexValue={AUTH_SERVICE}"
+    f"&goto=https://login.portofantwerpbruges.com:443/poam/oauth2/authorize"
+    f"?client_id%3Dnxtport_irp"
+    f"%26redirect_uri%3Dhttps://b2cnxtweuprdirp.b2clogin.com/b2cnxtweuprdirp.onmicrosoft.com/oauth2/authresp"
+    f"%26response_type%3Dcode"
+    f"%26scope%3Dopenid%2520email%2520profile"
+    f"%26response_mode%3Dform_post"
+)
+OAUTH_URL = (
+    "https://login.portofantwerpbruges.com/poam/oauth2/authorize"
     "?client_id=nxtport_irp"
     "&redirect_uri=https://b2cnxtweuprdirp.b2clogin.com/b2cnxtweuprdirp.onmicrosoft.com/oauth2/authresp"
     "&response_type=code"
-    "&scope=openid%20email%20profile"
+    "&scope=openid email profile"
     "&response_mode=form_post"
 )
+AZURE_TOKEN_URL = (
+    "https://b2cnxtweuprdirp.b2clogin.com"
+    "/b2cnxtweuprdirp.onmicrosoft.com/oauth2/v2.0/token"
+)
+CLIENT_ID = "ac46ac63-390d-4906-9936-4057f91a93bd"
+REDIRECT  = "https://b2cnxtweuprdirp.b2clogin.com/b2cnxtweuprdirp.onmicrosoft.com/oauth2/authresp"
 
 
 @dataclass
@@ -34,26 +52,31 @@ class TSDResult:
     status_clearance: str
 
 
-def _make_session() -> requests.Session:
-    s = requests.Session()
-    s.headers.update({
+def _headers_fr() -> dict:
+    return {
         "User-Agent"        : "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0",
         "Accept-API-Version": "resource=2.1, protocol=1.0",
         "Content-Type"      : "application/json",
         "Accept"            : "application/json",
-    })
-    return s
+    }
 
 
-def _post(s: requests.Session, url: str, body: dict) -> dict:
-    """POST met duidelijke foutmelding als response geen JSON is."""
-    resp = s.post(url, json=body, timeout=15)
-    log.info(f"POST {url} → HTTP {resp.status_code}")
+def _fr_post(url: str, body: dict, cookies: dict = None) -> tuple[dict, dict]:
+    """
+    POST naar ForgeRock. Geeft (response_json, cookies) terug.
+    Cookies worden meegegeven zodat sessie bewaard blijft zonder requests.Session object.
+    """
+    resp = requests.post(url, json=body, headers=_headers_fr(),
+                         cookies=cookies, timeout=15, allow_redirects=False)
+    log.info(f"POST ForgeRock → HTTP {resp.status_code}")
     if not resp.ok:
         raise ValueError(f"HTTP {resp.status_code}: {resp.text[:300]}")
     if not resp.text.strip():
-        raise ValueError(f"Lege response van server (HTTP {resp.status_code})")
-    return resp.json()
+        raise ValueError(f"Lege response (HTTP {resp.status_code})")
+    # Merge cookies
+    new_cookies = dict(cookies or {})
+    new_cookies.update(dict(resp.cookies))
+    return resp.json(), new_cookies
 
 
 class IRPClient:
@@ -64,27 +87,22 @@ class IRPClient:
 
     def start_login(self) -> dict:
         """
-        Start login flow en verstuur e-mail verificatiecode.
-        Geeft login_state terug voor gebruik in complete_login().
+        Stap 1: gebruikersnaam + wachtwoord + e-mail MFA kiezen.
+        Stuurt verificatiecode naar e-mail.
+        Geeft serialiseerbare login_state terug (geen Session object).
         """
-        auth_url = (
-            f"{FORGEROCK_BASE}/authenticate"
-            f"?authIndexType=service&authIndexValue={AUTH_SERVICE}"
-            f"&goto={GOTO_URL}"
-        )
+        cookies = {}
 
-        s = _make_session()
-
-        # ── Stap 1: Gebruikersnaam ────────────────────────────────────────────
-        log.info("Stap 1: gebruikersnaam")
-        data = _post(s, auth_url, {})
+        # Stap 1: Gebruikersnaam
+        log.info("Login stap 1: gebruikersnaam")
+        data, cookies = _fr_post(AUTH_URL, {}, cookies)
         for cb in data["callbacks"]:
             if cb["type"] == "NameCallback":
                 cb["input"][0]["value"] = self.username
+        data, cookies = _fr_post(AUTH_URL, {"authId": data["authId"], "callbacks": data["callbacks"]}, cookies)
 
-        # ── Stap 2: Wachtwoord ────────────────────────────────────────────────
-        log.info("Stap 2: wachtwoord")
-        data = _post(s, auth_url, {"authId": data["authId"], "callbacks": data["callbacks"]})
+        # Stap 2: Wachtwoord
+        log.info("Login stap 2: wachtwoord")
         for cb in data["callbacks"]:
             if cb["type"] == "PasswordCallback":
                 cb["input"][0]["value"] = self.password
@@ -94,36 +112,32 @@ class IRPClient:
                 cb["input"][0]["value"] = False
                 if len(cb["input"]) > 1:
                     cb["input"][1]["value"] = False
+        data, cookies = _fr_post(AUTH_URL, {"authId": data["authId"], "callbacks": data["callbacks"]}, cookies)
 
-        # ── Stap 3: Kies e-mail MFA ───────────────────────────────────────────
-        log.info("Stap 3: MFA keuze")
-        data = _post(s, auth_url, {"authId": data["authId"], "callbacks": data["callbacks"]})
+        # Stap 3: Kies e-mail MFA
+        log.info("Login stap 3: e-mail MFA kiezen")
         for cb in data["callbacks"]:
             if cb["type"] == "ChoiceCallback":
                 choices = next((o["value"] for o in cb["output"] if o["name"] == "choices"), [])
                 log.info(f"MFA opties: {choices}")
                 email_idx = next((i for i, c in enumerate(choices) if "mail" in c.lower()), 1)
                 cb["input"][0]["value"] = email_idx
-                log.info(f"E-mail MFA gekozen: optie {email_idx} = {choices[email_idx] if choices else '?'}")
+                log.info(f"Gekozen: optie {email_idx} = {choices[email_idx] if choices else '?'}")
+        data, cookies = _fr_post(AUTH_URL, {"authId": data["authId"], "callbacks": data["callbacks"]}, cookies)
 
-        # ── Stap 4: Code versturen → wacht op invoer ──────────────────────────
-        log.info("Stap 4: code versturen")
-        data = _post(s, auth_url, {"authId": data["authId"], "callbacks": data["callbacks"]})
         cb_types = [c["type"] for c in data.get("callbacks", [])]
-        log.info(f"Wacht op code. Callbacks: {cb_types}")
+        log.info(f"Wacht op OTP code. Callbacks: {cb_types}")
 
         return {
             "auth_id"  : data["authId"],
             "callbacks": data["callbacks"],
-            "session"  : s,
-            "auth_url" : auth_url,
+            "cookies"  : cookies,
         }
 
     def complete_login(self, login_state: dict, otp_code: str) -> bool:
-        """Voltooi login met de e-mail verificatiecode."""
-        s         = login_state["session"]
-        auth_url  = login_state["auth_url"]
+        """Stap 2: OTP code invoeren en token ophalen."""
         callbacks = login_state["callbacks"]
+        cookies   = login_state["cookies"]
 
         for cb in callbacks:
             if cb["type"] == "NameCallback":
@@ -131,46 +145,47 @@ class IRPClient:
             elif cb["type"] == "ConfirmationCallback":
                 cb["input"][0]["value"] = 0
 
-        log.info(f"OTP code ingevoerd, versturen...")
-        data = _post(s, auth_url, {"authId": login_state["auth_id"], "callbacks": callbacks})
+        log.info("OTP versturen...")
+        data, cookies = _fr_post(AUTH_URL, {"authId": login_state["auth_id"], "callbacks": callbacks}, cookies)
 
         token_id = data.get("tokenId")
         if not token_id:
             cb_types = [c["type"] for c in data.get("callbacks", [])]
-            log.error(f"Geen tokenId. Callbacks: {cb_types}")
+            log.error(f"Geen tokenId na OTP. Callbacks: {cb_types}")
             return False
 
         log.info("tokenId ontvangen ✓")
 
         # OAuth2 → auth code
-        oauth_url = (
-            "https://login.portofantwerpbruges.com/poam/oauth2/authorize"
-            "?client_id=nxtport_irp"
-            "&redirect_uri=https://b2cnxtweuprdirp.b2clogin.com/b2cnxtweuprdirp.onmicrosoft.com/oauth2/authresp"
-            "&response_type=code"
-            "&scope=openid email profile"
-            "&response_mode=form_post"
+        resp3 = requests.get(
+            OAUTH_URL,
+            headers={"User-Agent": "Mozilla/5.0"},
+            cookies={**cookies, "iPlanetDirectoryPro": token_id},
+            allow_redirects=True,
+            timeout=15,
         )
-        s.cookies.set("iPlanetDirectoryPro", token_id, domain="login.portofantwerpbruges.com")
-        resp3 = s.get(oauth_url, allow_redirects=True, timeout=15)
-        log.info(f"OAuth2 redirect → HTTP {resp3.status_code}, URL: {resp3.url[:80]}")
+        log.info(f"OAuth2 → HTTP {resp3.status_code}, URL: {resp3.url[:100]}")
 
         code_match = re.search(r'name="code"\s+value="([^"]+)"', resp3.text)
         if not code_match:
-            log.error(f"Geen auth code in response. Preview: {resp3.text[:200]}")
-            raise ValueError("Kon OAuth2 auth code niet ophalen na succesvolle login.")
+            log.error(f"Geen auth code. Preview: {resp3.text[:300]}")
+            raise ValueError("Kon OAuth2 auth code niet ophalen.")
+
+        auth_code = code_match.group(1)
+        log.info("OAuth2 auth code ontvangen ✓")
 
         # Azure AD B2C → Bearer token
-        token_resp = s.post(
-            "https://b2cnxtweuprdirp.b2clogin.com/b2cnxtweuprdirp.onmicrosoft.com/oauth2/v2.0/token",
+        token_resp = requests.post(
+            AZURE_TOKEN_URL,
             data={
                 "grant_type"  : "authorization_code",
-                "client_id"   : "ac46ac63-390d-4906-9936-4057f91a93bd",
-                "code"        : code_match.group(1),
-                "redirect_uri": "https://b2cnxtweuprdirp.b2clogin.com/b2cnxtweuprdirp.onmicrosoft.com/oauth2/authresp",
+                "client_id"   : CLIENT_ID,
+                "code"        : auth_code,
+                "redirect_uri": REDIRECT,
             },
             timeout=15,
         )
+        log.info(f"Azure token → HTTP {token_resp.status_code}")
         token_data = token_resp.json()
         token = token_data.get("id_token") or token_data.get("access_token")
         if not token:
@@ -186,7 +201,7 @@ class IRPClient:
     def _get_token(self) -> str:
         token = st.session_state.get("irp_token")
         if not token:
-            raise ValueError("Niet ingelogd — token ontbreekt.")
+            raise ValueError("Niet ingelogd.")
         return token
 
     def _headers(self) -> dict:
@@ -197,8 +212,7 @@ class IRPClient:
         }
 
     def _call(self, method: str, url: str, **kwargs):
-        s    = requests.Session()
-        resp = s.request(method, url, headers=self._headers(), timeout=15, **kwargs)
+        resp = requests.request(method, url, headers=self._headers(), timeout=15, **kwargs)
         if resp.status_code == 401:
             st.session_state.pop("irp_token", None)
             raise ValueError("Token verlopen — opnieuw inloggen.")
