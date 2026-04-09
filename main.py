@@ -215,17 +215,25 @@ def show_dashboard():
             import requests as _req
             resp = _req.get(
                 "https://irp.nxtport.com/api/auth/session",
-                headers={"Accept": "application/json"},
+                headers={
+                    "Accept"      : "application/json",
+                    "Content-Type": "application/json",
+                    "User-Agent"  : "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/116.0.0.0",
+                },
                 cookies=cookies, timeout=5,
             )
-            if resp.status_code == 200 and resp.json().get("idToken"):
-                user = resp.json().get("user", {})
+            data = resp.json() if resp.ok else {}
+            if resp.status_code == 200 and data.get("idToken"):
+                user = data.get("user", {})
                 st.success("🟢 Verbonden met NxtPort")
                 st.caption(f"👤 {user.get('email', '')}")
+            elif resp.status_code == 200 and not data.get("idToken"):
+                # Sessie bestaat maar token is verlopen
+                st.warning("🟡 Sessie verlopen — nieuwe cookie nodig")
             else:
-                st.error("🔴 Sessie verlopen")
-        except Exception:
-            st.warning("🟡 Verbinding onbekend")
+                st.error(f"🔴 Verbinding mislukt (HTTP {resp.status_code})")
+        except Exception as e:
+            st.warning(f"🟡 Verbinding onbekend: {e}")
 
         st.markdown("---")
         if st.button("🔄 Nu ophalen", use_container_width=True, type="primary"):
