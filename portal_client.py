@@ -154,9 +154,9 @@ class IRPClient:
         oauth_url = (
             "https://login.portofantwerpbruges.com/poam/oauth2/authorize"
             f"?client_id=nxtport_irp"
-            f"&redirect_uri={urllib.parse.quote(REDIRECT_URI, safe='')}"
+            f"&redirect_uri={REDIRECT_URI}"
             f"&response_type=code"
-            f"&scope=openid%20email%20profile"
+            f"&scope=openid+email+profile"
             f"&response_mode=form_post"
             f"&nonce={nonce}"
         )
@@ -164,15 +164,20 @@ class IRPClient:
         log.info(f"OAuth2 URL: {oauth_url[:150]}")
         log.info(f"Cookies: {list(cookies.keys())}")
 
+        all_cookies = {**cookies, "iPlanetDirectoryPro": token_id}
+        log.info(f"Alle cookies voor OAuth2: {list(all_cookies.keys())}")
         resp3 = requests.get(
             oauth_url,
-            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0"},
-            cookies={**cookies, "iPlanetDirectoryPro": token_id},
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0",
+                "Accept": "text/html,application/xhtml+xml",
+                "Cookie": "; ".join(f"{k}={v}" for k, v in all_cookies.items()),
+            },
             allow_redirects=True,
             timeout=15,
         )
         log.info(f"OAuth2 → HTTP {resp3.status_code}, finale URL: {resp3.url[:150]}")
-        log.info(f"OAuth2 response (eerste 500 chars): {resp3.text[:500]}")
+        log.info(f"OAuth2 response (eerste 1000 chars): {resp3.text[:1000]}")
 
         # Auth code zoeken in HTML form
         code_match = re.search(r'name="code"\s+value="([^"]+)"', resp3.text)
