@@ -5,37 +5,25 @@ Login via ForgeRock met e-mail verificatiecode (MFA)
 
 import logging
 import re
+import secrets as _secrets
+import urllib.parse
 import requests
 import streamlit as st
 from dataclasses import dataclass
 
 log = logging.getLogger(__name__)
 
-BASE_URL       = "https://api.irp.nxtport.com/irp-bff/v1"
-FORGEROCK_BASE = "https://login.portofantwerpbruges.com/poam/json/realms/root/realms/portofantwerpbruges"
-AUTH_SERVICE   = "GlobalAuthenticationPolicyLevel25_poab"
-CLIENT_ID      = "ac46ac63-390d-4906-9936-4057f91a93bd"
-REDIRECT_URI   = "https://b2cnxtweuprdiirp.b2clogin.com/b2cnxtweuprdiirp.onmicrosoft.com/oauth2/authresp"
+BASE_URL        = "https://api.irp.nxtport.com/irp-bff/v1"
+FORGEROCK_BASE  = "https://login.portofantwerpbruges.com/poam/json/realms/root/realms/portofantwerpbruges"
+AUTH_SERVICE    = "GlobalAuthenticationPolicyLevel25_poab"
+CLIENT_ID       = "ac46ac63-390d-4906-9936-4057f91a93bd"
+REDIRECT_URI    = "https://b2cnxtweuprdiirp.b2clogin.com/b2cnxtweuprdiirp.onmicrosoft.com/oauth2/authresp"
 AZURE_TOKEN_URL = "https://b2cnxtweuprdiirp.b2clogin.com/b2cnxtweuprdiirp.onmicrosoft.com/oauth2/v2.0/token"
 
+# ForgeRock authenticate endpoint
 AUTH_URL = (
     f"{FORGEROCK_BASE}/authenticate"
     f"?authIndexType=service&authIndexValue={AUTH_SERVICE}"
-    f"&goto=https%3A%2F%2Flogin.portofantwerpbruges.com%3A443%2Fpoam%2Foauth2%2Fauthorize"
-    f"%3Fclient_id%3Dnxtport_irp"
-    f"%26redirect_uri%3D{REDIRECT_URI.replace(':', '%3A').replace('/', '%2F')}"
-    f"%26response_type%3Dcode"
-    f"%26scope%3Dopenid%2520email%2520profile"
-    f"%26response_mode%3Dform_post"
-)
-
-OAUTH_URL = (
-    "https://login.portofantwerpbruges.com/poam/oauth2/authorize"
-    f"?client_id=nxtport_irp"
-    f"&redirect_uri={REDIRECT_URI}"
-    f"&response_type=code"
-    f"&scope=openid%20email%20profile"
-    f"&response_mode=form_post"
 )
 
 
@@ -79,15 +67,29 @@ class IRPClient:
         self.password = st.secrets["irp"]["password"]
 
     def start_login(self) -> dict:
-        cookies = {}
+        """Start login: gebruikersnaam + wachtwoord + kies e-mail MFA."""
+        # Bouw goto URL op — exact zoals browser dit doet
+        nonce = _secrets.token_urlsafe(16)
+        goto = urllib.parse.quote(
+            f"https://login.portofantwerpbruges.com:443/poam/oauth2/authorize"
+            f"?client_id=nxtport_irp"
+            f"&redirect_uri={REDIRECT_URI}"
+            f"&response_type=code"
+            f"&scope=openid email profile"
+            f"&response_mode=form_post"
+            f"&nonce={nonce}",
+            safe=""
+        )
+        auth_url = f"{AUTH_URL}&goto={goto}"
+        cookies  = {}
 
         # Stap 1: Gebruikersnaam
         log.info("Login stap 1: gebruikersnaam")
-        data, cookies = _fr_post(AUTH_URL, {}, cookies)
+        data, cookies = _fr_post(auth_url, {}, cookies)
         for cb in data["callbacks"]:
             if cb["type"] == "NameCallback":
                 cb["input"][0]["value"] = self.username
-        data, cookies = _fr_post(AUTH_URL, {"authId": data["authId"], "callbacks": data["callbacks"]}, cookies)
+        data, cookies = _fr_post(auth_url, {"authId": data["authId"], "callbacks": data["callbacks"]}, cookies)
 
         # Stap 2: Wachtwoord
         log.info("Login stap 2: wachtwoord")
@@ -100,7 +102,7 @@ class IRPClient:
                 cb["input"][0]["value"] = False
                 if len(cb["input"]) > 1:
                     cb["input"][1]["value"] = False
-        data, cookies = _fr_post(AUTH_URL, {"authId": data["authId"], "callbacks": data["callbacks"]}, cookies)
+        data, cookies = _fr_post(auth_url, {"authId": data["authId"], "callbacks": data["callbacks"]}, cookies)
 
         # Stap 3: Kies e-mail MFA
         log.info("Login stap 3: e-mail MFA kiezen")
@@ -111,7 +113,7 @@ class IRPClient:
                 email_idx = next((i for i, c in enumerate(choices) if "mail" in c.lower()), 1)
                 cb["input"][0]["value"] = email_idx
                 log.info(f"Gekozen: optie {email_idx} = {choices[email_idx] if choices else '?'}")
-        data, cookies = _fr_post(AUTH_URL, {"authId": data["authId"], "callbacks": data["callbacks"]}, cookies)
+        data, cookies = _fr_post(auth_url, {"authId": data["authId"], "callbacks": data["callbacks"]}, cookies)
 
         cb_types = [c["type"] for c in data.get("callbacks", [])]
         log.info(f"Wacht op OTP. Callbacks: {cb_types}")
@@ -120,11 +122,16 @@ class IRPClient:
             "auth_id"  : data["authId"],
             "callbacks": data["callbacks"],
             "cookies"  : cookies,
+            "auth_url" : auth_url,
+            "nonce"    : nonce,
         }
 
     def complete_login(self, login_state: dict, otp_code: str) -> bool:
+        """OTP code invoeren en Bearer token ophalen."""
         callbacks = login_state["callbacks"]
         cookies   = login_state["cookies"]
+        auth_url  = login_state["auth_url"]
+        nonce     = login_state["nonce"]
 
         for cb in callbacks:
             if cb["type"] == "NameCallback":
@@ -133,59 +140,71 @@ class IRPClient:
                 cb["input"][0]["value"] = 0
 
         log.info("OTP versturen...")
-        data, cookies = _fr_post(AUTH_URL, {"authId": login_state["auth_id"], "callbacks": callbacks}, cookies)
+        data, cookies = _fr_post(auth_url, {"authId": login_state["auth_id"], "callbacks": callbacks}, cookies)
 
         token_id = data.get("tokenId")
         if not token_id:
-            log.error(f"Geen tokenId. Keys: {list(data.keys())}")
+            cb_types = [c["type"] for c in data.get("callbacks", [])]
+            log.error(f"Geen tokenId. Callbacks: {cb_types}")
             return False
 
         log.info("tokenId ontvangen ✓")
 
-        # OAuth2 → auth code
-        all_cookies = {**cookies, "iPlanetDirectoryPro": token_id}
+        # OAuth2 authorize → auth code via form_post
+        oauth_url = (
+            "https://login.portofantwerpbruges.com/poam/oauth2/authorize"
+            f"?client_id=nxtport_irp"
+            f"&redirect_uri={urllib.parse.quote(REDIRECT_URI, safe='')}"
+            f"&response_type=code"
+            f"&scope=openid%20email%20profile"
+            f"&response_mode=form_post"
+            f"&nonce={nonce}"
+        )
+
+        log.info(f"OAuth2 URL: {oauth_url[:150]}")
+        log.info(f"Cookies: {list(cookies.keys())}")
+
         resp3 = requests.get(
-            OAUTH_URL,
+            oauth_url,
             headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0"},
-            cookies=all_cookies,
+            cookies={**cookies, "iPlanetDirectoryPro": token_id},
             allow_redirects=True,
             timeout=15,
         )
-        log.info(f"OAuth2 → HTTP {resp3.status_code}, URL: {resp3.url[:120]}")
+        log.info(f"OAuth2 → HTTP {resp3.status_code}, finale URL: {resp3.url[:150]}")
+        log.info(f"OAuth2 response (eerste 500 chars): {resp3.text[:500]}")
 
-        # Auth code zit in de HTML form (form_post mode)
+        # Auth code zoeken in HTML form
         code_match = re.search(r'name="code"\s+value="([^"]+)"', resp3.text)
         if not code_match:
-            # Probeer ook in URL
             url_match = re.search(r'[?&]code=([^&\s"]+)', resp3.url)
             if url_match:
                 auth_code = url_match.group(1)
                 log.info("Auth code gevonden in URL ✓")
             else:
-                log.error(f"Geen auth code. HTTP {resp3.status_code}. URL: {resp3.url}. Headers: {dict(resp3.headers)}. Preview: {resp3.text[:500]}")
+                log.error(f"Geen auth code. Status: {resp3.status_code}")
                 raise ValueError("Kon OAuth2 auth code niet ophalen.")
         else:
             auth_code = code_match.group(1)
-            log.info("Auth code gevonden in HTML form ✓")
+            log.info("Auth code gevonden in HTML ✓")
 
         # Azure AD B2C → Bearer token
-        log.info(f"Azure token aanvragen met redirect_uri={REDIRECT_URI}")
+        log.info("Azure token aanvragen...")
         token_resp = requests.post(
             AZURE_TOKEN_URL,
             data={
-                "grant_type"   : "authorization_code",
-                "client_id"    : CLIENT_ID,
-                "code"         : auth_code,
-                "redirect_uri" : REDIRECT_URI,
-                "scope"        : "openid email profile",
+                "grant_type"  : "authorization_code",
+                "client_id"   : CLIENT_ID,
+                "code"        : auth_code,
+                "redirect_uri": REDIRECT_URI,
+                "scope"       : "openid email profile",
             },
             headers={"Content-Type": "application/x-www-form-urlencoded"},
             timeout=15,
         )
         log.info(f"Azure token → HTTP {token_resp.status_code}")
         if not token_resp.ok:
-            log.error(f"Azure fout: {token_resp.text[:300]}")
-            raise ValueError(f"Azure AD B2C fout: HTTP {token_resp.status_code}: {token_resp.text[:200]}")
+            raise ValueError(f"Azure fout HTTP {token_resp.status_code}: {token_resp.text[:300]}")
 
         token_data = token_resp.json()
         token = token_data.get("id_token") or token_data.get("access_token")
