@@ -31,11 +31,30 @@ class IRPClient:
 
     def set_cookies(self, cookie_str: str):
         st.session_state["irp_cookies"] = cookie_str.strip()
+        # Haal meteen het idToken op en sla op
+        self._fetch_id_token()
 
-    def _get_cookies(self) -> dict:
-        cookie_str = st.session_state.get("irp_cookies")
-        if not cookie_str:
-            raise ValueError("Niet ingelogd.")
+    def _fetch_id_token(self):
+        """Haal het idToken op via de session endpoint."""
+        try:
+            cookies = self._parse_cookies(st.session_state.get("irp_cookies", ""))
+            resp = requests.get(
+                "https://irp.nxtport.com/api/auth/session",
+                headers={"Accept": "application/json", "Content-Type": "application/json"},
+                cookies=cookies,
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                token = resp.json().get("idToken")
+                if token:
+                    st.session_state["irp_id_token"] = token
+                    log.info("idToken opgehaald ✓")
+                else:
+                    log.error("Geen idToken in session response")
+        except Exception as e:
+            log.error(f"Fout bij ophalen idToken: {e}")
+
+    def _parse_cookies(self, cookie_str: str) -> dict:
         cookies = {}
         for part in cookie_str.split(";"):
             part = part.strip()
@@ -44,8 +63,19 @@ class IRPClient:
                 cookies[k.strip()] = v.strip()
         return cookies
 
+    def _get_token(self) -> str:
+        token = st.session_state.get("irp_id_token")
+        if not token:
+            # Probeer opnieuw ophalen
+            self._fetch_id_token()
+            token = st.session_state.get("irp_id_token")
+        if not token:
+            raise ValueError("Niet ingelogd — geen token beschikbaar.")
+        return token
+
     def _headers(self) -> dict:
         return {
+            "Authorization": f"Bearer {self._get_token()}",
             "Content-Type" : "application/json",
             "Accept"       : "application/json",
             "Active-Role"  : "LSP",
@@ -56,12 +86,12 @@ class IRPClient:
         resp = requests.request(
             method, url,
             headers=self._headers(),
-            cookies=self._get_cookies(),
             timeout=15,
             **kwargs
         )
         log.info(f"{method} {url} → HTTP {resp.status_code}")
         if resp.status_code == 401:
+            st.session_state.pop("irp_id_token", None)
             st.session_state.pop("irp_cookies", None)
             raise ValueError("Sessie verlopen — opnieuw inloggen.")
         return resp
@@ -98,7 +128,7 @@ class IRPClient:
     def get_tsd_information(self, crn: str) -> TSDResult | None:
         """Haal TSD info op via CRN — bevat MRN zodra container gelost."""
         try:
-            resp = self._call("GET", f"{TSD_BASE}/{crn}/information")
+            resp = self._call("GET", f"{TSD_BASE}/{crn}")
             log.info(f"TSD response: {resp.text[:200]}")
             if resp.status_code == 200:
                 data = resp.json()
