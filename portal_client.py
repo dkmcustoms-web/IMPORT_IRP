@@ -1,10 +1,6 @@
 """
 DKM Import Release Dashboard — IRP NxtPort API Client
-ForgeRock login flow:
-  Stap 1: NameCallback → gebruikersnaam
-  Stap 2: TextOutputCallback + ConfirmationCallback → bevestigen (0)
-  Stap 3: PasswordCallback → wachtwoord
-  → tokenId → OAuth2 code → Bearer token
+ForgeRock login met MFA ChoiceCallback logging
 """
 
 import logging
@@ -46,26 +42,35 @@ class IRPClient:
         self._token   = None
 
     def _fill_callbacks(self, callbacks: list) -> list:
-        """Vul alle bekende callback types correct in."""
         for cb in callbacks:
             t = cb["type"]
             if t == "NameCallback":
-                # Gebruikersnaam
                 cb["input"][0]["value"] = self.username
                 log.info("NameCallback → gebruikersnaam ingevuld")
             elif t == "PasswordCallback":
-                # Wachtwoord
                 cb["input"][0]["value"] = self.password
                 log.info("PasswordCallback → wachtwoord ingevuld")
-            elif t == "ConfirmationCallback":
-                # Altijd eerste optie kiezen (Login / Bevestigen)
+            elif t == "ChoiceCallback":
+                # Log alle beschikbare opties
+                choices = []
+                for out in cb.get("output", []):
+                    if out.get("name") == "choices":
+                        choices = out.get("value", [])
+                log.info(f"ChoiceCallback opties: {choices}")
+                # Kies eerste optie (index 0)
                 cb["input"][0]["value"] = 0
-                log.info("ConfirmationCallback → 0 (bevestigen)")
+                log.info(f"ChoiceCallback → optie 0 gekozen: {choices[0] if choices else 'onbekend'}")
+            elif t == "ConfirmationCallback":
+                options = []
+                for out in cb.get("output", []):
+                    if out.get("name") == "options":
+                        options = out.get("value", [])
+                log.info(f"ConfirmationCallback opties: {options} → 0 gekozen")
+                cb["input"][0]["value"] = 0
             elif t == "BooleanAttributeInputCallback":
                 cb["input"][0]["value"] = False
                 if len(cb["input"]) > 1:
                     cb["input"][1]["value"] = False
-            # TextOutputCallback heeft geen input → niets doen
         return callbacks
 
     def _login(self) -> str:
@@ -85,22 +90,17 @@ class IRPClient:
             "Accept"            : "application/json",
         })
 
-        # Initieel verzoek
         resp = s.post(auth_url, json={}, timeout=15)
         resp.raise_for_status()
         data = resp.json()
 
-        # Loop door alle stappen tot tokenId ontvangen
-        max_stappen = 10
-        for stap in range(max_stappen):
+        for stap in range(15):
             cb_types = [c["type"] for c in data.get("callbacks", [])]
             log.info(f"Stap {stap+1} callbacks: {cb_types}")
 
-            # Klaar — tokenId ontvangen
             if "tokenId" in data:
                 break
 
-            # Vul callbacks in en stuur terug
             auth_id   = data["authId"]
             callbacks = self._fill_callbacks(data["callbacks"])
 
@@ -114,11 +114,10 @@ class IRPClient:
         token_id = data.get("tokenId")
         if not token_id:
             cb_types = [c["type"] for c in data.get("callbacks", [])]
-            raise ValueError(f"Login mislukt na {max_stappen} stappen. Laatste callbacks: {cb_types}")
+            raise ValueError(f"Login mislukt. Laatste callbacks: {cb_types}")
 
         log.info("ForgeRock tokenId ontvangen ✓")
 
-        # OAuth2 authorize → auth code
         oauth_url = (
             "https://login.portofantwerpbruges.com/poam/oauth2/authorize"
             "?client_id=nxtport_irp"
@@ -137,7 +136,6 @@ class IRPClient:
         auth_code = code_match.group(1)
         log.info("OAuth2 auth code ontvangen ✓")
 
-        # Azure AD B2C → Bearer token
         token_resp = s.post(
             "https://b2cnxtweuprdirp.b2clogin.com/b2cnxtweuprdirp.onmicrosoft.com/oauth2/v2.0/token",
             data={
