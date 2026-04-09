@@ -10,7 +10,8 @@ from dataclasses import dataclass
 
 log = logging.getLogger(__name__)
 
-BASE_URL = "https://api.irp.nxtport.com/irp-bff/v1"
+BASE_URL    = "https://api.irp.nxtport.com/irp-bff/v1"
+SESSION_URL = "https://irp.nxtport.com/api/auth/session"
 
 
 @dataclass
@@ -26,29 +27,43 @@ class TSDResult:
 class IRPClient:
 
     def is_logged_in(self) -> bool:
-        return bool(st.session_state.get("irp_token"))
+        return bool(st.session_state.get("irp_cookies"))
 
-    def set_token(self, token: str):
-        st.session_state["irp_token"] = token.strip().removeprefix("Bearer ")
+    def set_cookies(self, cookie_str: str):
+        """Sla de cookie string op uit de browser."""
+        st.session_state["irp_cookies"] = cookie_str.strip()
 
-    def _get_token(self) -> str:
-        token = st.session_state.get("irp_token")
-        if not token:
+    def _get_cookies(self) -> dict:
+        cookie_str = st.session_state.get("irp_cookies")
+        if not cookie_str:
             raise ValueError("Niet ingelogd.")
-        return token
+        # Parseer "key=value; key2=value2" naar dict
+        cookies = {}
+        for part in cookie_str.split(";"):
+            part = part.strip()
+            if "=" in part:
+                k, v = part.split("=", 1)
+                cookies[k.strip()] = v.strip()
+        return cookies
 
     def _headers(self) -> dict:
         return {
-            "Authorization": f"Bearer {self._get_token()}",
-            "Content-Type" : "application/json",
-            "Accept"       : "application/json",
+            "Content-Type": "application/json",
+            "Accept"      : "application/json",
+            "User-Agent"  : "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/116.0.0.0",
         }
 
     def _call(self, method: str, url: str, **kwargs):
-        resp = requests.request(method, url, headers=self._headers(), timeout=15, **kwargs)
+        resp = requests.request(
+            method, url,
+            headers=self._headers(),
+            cookies=self._get_cookies(),
+            timeout=15,
+            **kwargs
+        )
         if resp.status_code == 401:
-            st.session_state.pop("irp_token", None)
-            raise ValueError("Token verlopen — opnieuw inloggen.")
+            st.session_state.pop("irp_cookies", None)
+            raise ValueError("Sessie verlopen — opnieuw inloggen.")
         return resp
 
     def get_crn_from_bl(self, bl: str) -> str | None:
