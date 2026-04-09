@@ -160,7 +160,10 @@ class IRPClient:
             log.error(f"Geen tokenId. Callbacks: {cb_types}")
             return False
 
-        log.info("tokenId ontvangen ✓")
+        log.info(f"tokenId ontvangen ✓")
+        log.info(f"Volledige login response keys: {list(data.keys())}")
+        log.info(f"successUrl: {data.get('successUrl', 'NIET AANWEZIG')}")
+        log.info(f"realm: {data.get('realm', 'NIET AANWEZIG')}")
 
         # ForgeRock redirect opvolgen via de successUrl
         # Na succesvolle login geeft ForgeRock een successUrl terug
