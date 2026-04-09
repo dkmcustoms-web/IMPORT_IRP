@@ -46,32 +46,32 @@ def show_token_page():
 
     st.markdown("""
     <div class="token-box">
-    <b>Hoe krijg je de sessie cookie?</b><br>
+    <b>Hoe krijg je de Bearer token?</b><br>
     1. Ga naar <a href="https://irp.nxtport.com" target="_blank">irp.nxtport.com</a> en log in (met MFA)<br>
     2. Druk <b>F12</b> → tab <b>Network</b> → filter op <b>Fetch/XHR</b><br>
-    3. Klik op de request <b>session</b> (irp.nxtport.com/api/auth/session)<br>
-    4. Tab <b>Headers</b> → scroll naar <b>Request Headers</b> → zoek <b>Cookie</b><br>
-    5. Kopieer de volledige waarde van <b>Cookie</b> (lange tekst met meerdere cookies)
+    3. Klik op een API call (bv. <b>reference</b> of <b>session</b>)<br>
+    4. Tab <b>Headers</b> → zoek <b>Authorization</b><br>
+    5. Kopieer alles na <b>"Bearer "</b> (de lange eyJ... tekst)
     </div>
     """, unsafe_allow_html=True)
 
     cookie_str = st.text_area(
-        "Plak hier de volledige Cookie waarde:",
+        "Plak hier de Bearer token (of volledige Authorization header):",
         height=120,
-        placeholder="ASLBSA=...; __Secure-next-auth.session-token.0=eyJ...; __Secure-next-auth.session-token.1=...",
+        placeholder="eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...",
     )
 
     if st.button("✅ Opslaan & inloggen", type="primary"):
         if cookie_str and cookie_str.strip():
             irp = IRPClient()
-            irp.set_cookies(cookie_str.strip())
+            irp.set_token(cookie_str.strip())
             st.success("✅ Sessie opgeslagen! Dashboard laden...")
             st.rerun()
         else:
             st.warning("Voer eerst de cookie waarde in.")
 
     st.markdown("---")
-    st.caption("💡 Tip: de sessie is geldig tot middernacht. Na verloop moet je opnieuw inloggen op irp.nxtport.com en een nieuwe cookie invoeren.")
+    st.caption("💡 Tip: de token is geldig voor ±1 uur. Na verloop moet je opnieuw inloggen op irp.nxtport.com en een nieuwe token invoeren.")
 
 
 # ── Polling logica ────────────────────────────────────────────────────────────
@@ -150,7 +150,7 @@ def show_dashboard():
             st.session_state["run_poll"] = True
         st.markdown("---")
         if st.button("🔑 Nieuwe token invoeren", use_container_width=True):
-            st.session_state.pop("irp_cookies", None)
+            st.session_state.pop("irp_token", None)
             st.rerun()
         st.caption("Token vervalt na ±1 uur")
 
@@ -171,7 +171,7 @@ def show_dashboard():
         except ValueError as e:
             if "Token verlopen" in str(e):
                 st.error("⏱️ Token verlopen — voer een nieuwe token in.")
-                st.session_state.pop("irp_cookies", None)
+                st.session_state.pop("irp_token", None)
                 st.rerun()
             else:
                 st.error(f"Fout: {e}")

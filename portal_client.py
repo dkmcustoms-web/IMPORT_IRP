@@ -12,6 +12,7 @@ log = logging.getLogger(__name__)
 
 BASE_URL    = "https://api.irp.nxtport.com/irp-bff/v1"
 SESSION_URL = "https://irp.nxtport.com/api/auth/session"
+TSD_BASE    = "https://api.irp.nxtport.com/irp-bff/v1/tsd"
 
 
 @dataclass
@@ -27,43 +28,40 @@ class TSDResult:
 class IRPClient:
 
     def is_logged_in(self) -> bool:
-        return bool(st.session_state.get("irp_cookies"))
+        return bool(st.session_state.get("irp_token"))
 
-    def set_cookies(self, cookie_str: str):
-        """Sla de cookie string op uit de browser."""
-        st.session_state["irp_cookies"] = cookie_str.strip()
+    def set_token(self, token: str):
+        """Sla de Bearer token op uit de browser."""
+        token = token.strip()
+        if token.lower().startswith("bearer "):
+            token = token[7:]
+        st.session_state["irp_token"] = token
 
-    def _get_cookies(self) -> dict:
-        cookie_str = st.session_state.get("irp_cookies")
-        if not cookie_str:
+    def _get_token(self) -> str:
+        token = st.session_state.get("irp_token")
+        if not token:
             raise ValueError("Niet ingelogd.")
-        # Parseer "key=value; key2=value2" naar dict
-        cookies = {}
-        for part in cookie_str.split(";"):
-            part = part.strip()
-            if "=" in part:
-                k, v = part.split("=", 1)
-                cookies[k.strip()] = v.strip()
-        return cookies
+        return token
 
     def _headers(self) -> dict:
         return {
-            "Content-Type": "application/json",
-            "Accept"      : "application/json",
-            "User-Agent"  : "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/116.0.0.0",
+            "Authorization": f"Bearer {self._get_token()}",
+            "Content-Type" : "application/json",
+            "Accept"       : "application/json",
+            "Active-Role"  : "LSP",
+            "User-Agent"   : "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/116.0.0.0",
         }
 
     def _call(self, method: str, url: str, **kwargs):
         resp = requests.request(
             method, url,
             headers=self._headers(),
-            cookies=self._get_cookies(),
             timeout=15,
             **kwargs
         )
         if resp.status_code == 401:
-            st.session_state.pop("irp_cookies", None)
-            raise ValueError("Sessie verlopen — opnieuw inloggen.")
+            st.session_state.pop("irp_token", None)
+            raise ValueError("Token verlopen — opnieuw inloggen.")
         return resp
 
     def get_crn_from_bl(self, bl: str, container: str = None, eori: str = None) -> str | None:
@@ -89,30 +87,23 @@ class IRPClient:
                     log.warning(f"Geen resultaat voor BL={bl}, container={container}")
                     return None
 
-            # Fallback: BL only
-            log.info(f"Zoeken via BL only: {bl}")
-            resp = self._call("GET", f"{BASE_URL}/reference", params={"bl": bl})
-            log.info(f"Reference response HTTP {resp.status_code}: {resp.text[:300]}")
+            # Fallback: BL only (met correcte URL en parameters)
+            log.info(f"Zoeken via BL+container+eori: bl={bl}, teId={container}, eori={eori}")
+            params = {"bl": bl, "sn": "", "eori": eori or "", "teId": container or ""}
+            resp = self._call("GET", f"{TSD_BASE}/reference", params=params)
+            log.info(f"Reference HTTP {resp.status_code}: {resp.text[:300]}")
             if resp.status_code == 200:
                 data = resp.json()
-                log.info(f"Reference data type: {type(data)}, waarde: {data}")
-                # Response kan string zijn ("CRN26...") of dict met crn veld
                 if isinstance(data, str):
                     return data
                 if isinstance(data, dict):
                     return data.get("crn")
-                if isinstance(data, list) and len(data) > 0:
-                    item = data[0]
-                    if isinstance(item, str):
-                        return item
-                    if isinstance(item, dict):
-                        return item.get("crn")
                 return str(data)
             elif resp.status_code == 404:
-                log.warning(f"Geen CRN voor BL {bl}")
+                log.warning(f"Geen CRN voor BL={bl}, container={container}")
                 return None
             else:
-                log.error(f"HTTP {resp.status_code} voor BL {bl}: {resp.text[:200]}")
+                log.error(f"HTTP {resp.status_code}: {resp.text[:200]}")
                 return None
         except Exception as e:
             log.error(f"Exception get_crn_from_bl: {e}")
@@ -120,7 +111,7 @@ class IRPClient:
 
     def get_tsd_information(self, crn: str) -> TSDResult | None:
         try:
-            resp = self._call("GET", f"{BASE_URL}/tsd/{crn}/information")
+            resp = self._call("GET", f"{TSD_BASE}/{crn}/information")
             if resp.status_code == 200:
                 data = resp.json()
                 mrn  = data.get("mrn") or None
