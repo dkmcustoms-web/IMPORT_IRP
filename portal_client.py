@@ -34,17 +34,38 @@ class TSDResult:
     status_clearance: str
 
 
+def _make_session() -> requests.Session:
+    s = requests.Session()
+    s.headers.update({
+        "User-Agent"        : "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0",
+        "Accept-API-Version": "resource=2.1, protocol=1.0",
+        "Content-Type"      : "application/json",
+        "Accept"            : "application/json",
+    })
+    return s
+
+
+def _post(s: requests.Session, url: str, body: dict) -> dict:
+    """POST met duidelijke foutmelding als response geen JSON is."""
+    resp = s.post(url, json=body, timeout=15)
+    log.info(f"POST {url} → HTTP {resp.status_code}")
+    if not resp.ok:
+        raise ValueError(f"HTTP {resp.status_code}: {resp.text[:300]}")
+    if not resp.text.strip():
+        raise ValueError(f"Lege response van server (HTTP {resp.status_code})")
+    return resp.json()
+
+
 class IRPClient:
 
     def __init__(self):
         self.username = st.secrets["irp"]["username"]
         self.password = st.secrets["irp"]["password"]
-        self._token   = st.session_state.get("irp_token")
 
     def start_login(self) -> dict:
         """
-        Start de login flow en stuur een e-mail verificatiecode.
-        Geeft de session state terug die nodig is voor stap 2.
+        Start login flow en verstuur e-mail verificatiecode.
+        Geeft login_state terug voor gebruik in complete_login().
         """
         auth_url = (
             f"{FORGEROCK_BASE}/authenticate"
@@ -52,27 +73,18 @@ class IRPClient:
             f"&goto={GOTO_URL}"
         )
 
-        s = requests.Session()
-        s.headers.update({
-            "User-Agent"        : "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0",
-            "Accept-API-Version": "resource=2.1, protocol=1.0",
-            "Content-Type"      : "application/json",
-            "Accept"            : "application/json",
-        })
+        s = _make_session()
 
-        # Stap 1: Gebruikersnaam
-        resp = s.post(auth_url, json={}, timeout=15)
-        resp.raise_for_status()
-        data = resp.json()
+        # ── Stap 1: Gebruikersnaam ────────────────────────────────────────────
+        log.info("Stap 1: gebruikersnaam")
+        data = _post(s, auth_url, {})
         for cb in data["callbacks"]:
             if cb["type"] == "NameCallback":
                 cb["input"][0]["value"] = self.username
 
-        resp = s.post(auth_url, json={"authId": data["authId"], "callbacks": data["callbacks"]}, timeout=15)
-        resp.raise_for_status()
-        data = resp.json()
-
-        # Stap 2: Wachtwoord
+        # ── Stap 2: Wachtwoord ────────────────────────────────────────────────
+        log.info("Stap 2: wachtwoord")
+        data = _post(s, auth_url, {"authId": data["authId"], "callbacks": data["callbacks"]})
         for cb in data["callbacks"]:
             if cb["type"] == "PasswordCallback":
                 cb["input"][0]["value"] = self.password
@@ -83,28 +95,23 @@ class IRPClient:
                 if len(cb["input"]) > 1:
                     cb["input"][1]["value"] = False
 
-        resp = s.post(auth_url, json={"authId": data["authId"], "callbacks": data["callbacks"]}, timeout=15)
-        resp.raise_for_status()
-        data = resp.json()
-
-        # Stap 3: Kies "Verificatiecode via e-mail" (optie 1)
+        # ── Stap 3: Kies e-mail MFA ───────────────────────────────────────────
+        log.info("Stap 3: MFA keuze")
+        data = _post(s, auth_url, {"authId": data["authId"], "callbacks": data["callbacks"]})
         for cb in data["callbacks"]:
             if cb["type"] == "ChoiceCallback":
                 choices = next((o["value"] for o in cb["output"] if o["name"] == "choices"), [])
                 log.info(f"MFA opties: {choices}")
-                # Kies e-mail optie (index 1)
                 email_idx = next((i for i, c in enumerate(choices) if "mail" in c.lower()), 1)
                 cb["input"][0]["value"] = email_idx
-                log.info(f"E-mail MFA gekozen (optie {email_idx})")
+                log.info(f"E-mail MFA gekozen: optie {email_idx} = {choices[email_idx] if choices else '?'}")
 
-        resp = s.post(auth_url, json={"authId": data["authId"], "callbacks": data["callbacks"]}, timeout=15)
-        resp.raise_for_status()
-        data = resp.json()
+        # ── Stap 4: Code versturen → wacht op invoer ──────────────────────────
+        log.info("Stap 4: code versturen")
+        data = _post(s, auth_url, {"authId": data["authId"], "callbacks": data["callbacks"]})
+        cb_types = [c["type"] for c in data.get("callbacks", [])]
+        log.info(f"Wacht op code. Callbacks: {cb_types}")
 
-        # Nu wacht ForgeRock op de e-mail code (NameCallback)
-        log.info(f"Wacht op e-mail code. Callbacks: {[c['type'] for c in data.get('callbacks', [])]}")
-
-        # Sla sessie op voor stap 2
         return {
             "auth_id"  : data["authId"],
             "callbacks": data["callbacks"],
@@ -113,34 +120,27 @@ class IRPClient:
         }
 
     def complete_login(self, login_state: dict, otp_code: str) -> bool:
-        """
-        Voltooi de login met de e-mail verificatiecode.
-        Slaat het token op in st.session_state.
-        """
+        """Voltooi login met de e-mail verificatiecode."""
         s         = login_state["session"]
         auth_url  = login_state["auth_url"]
         callbacks = login_state["callbacks"]
 
-        # Vul de OTP code in (NameCallback)
         for cb in callbacks:
             if cb["type"] == "NameCallback":
-                cb["input"][0]["value"] = otp_code
+                cb["input"][0]["value"] = otp_code.strip()
             elif cb["type"] == "ConfirmationCallback":
                 cb["input"][0]["value"] = 0
 
-        resp = s.post(auth_url, json={
-            "authId"   : login_state["auth_id"],
-            "callbacks": callbacks,
-        }, timeout=15)
-        resp.raise_for_status()
-        data = resp.json()
+        log.info(f"OTP code ingevoerd, versturen...")
+        data = _post(s, auth_url, {"authId": login_state["auth_id"], "callbacks": callbacks})
 
         token_id = data.get("tokenId")
         if not token_id:
-            log.error(f"Login mislukt na OTP. Response: {list(data.keys())}")
+            cb_types = [c["type"] for c in data.get("callbacks", [])]
+            log.error(f"Geen tokenId. Callbacks: {cb_types}")
             return False
 
-        log.info("ForgeRock tokenId ontvangen ✓")
+        log.info("tokenId ontvangen ✓")
 
         # OAuth2 → auth code
         oauth_url = (
@@ -153,11 +153,12 @@ class IRPClient:
         )
         s.cookies.set("iPlanetDirectoryPro", token_id, domain="login.portofantwerpbruges.com")
         resp3 = s.get(oauth_url, allow_redirects=True, timeout=15)
+        log.info(f"OAuth2 redirect → HTTP {resp3.status_code}, URL: {resp3.url[:80]}")
 
         code_match = re.search(r'name="code"\s+value="([^"]+)"', resp3.text)
         if not code_match:
-            log.error("Kon OAuth2 auth code niet ophalen.")
-            return False
+            log.error(f"Geen auth code in response. Preview: {resp3.text[:200]}")
+            raise ValueError("Kon OAuth2 auth code niet ophalen na succesvolle login.")
 
         # Azure AD B2C → Bearer token
         token_resp = s.post(
@@ -173,13 +174,10 @@ class IRPClient:
         token_data = token_resp.json()
         token = token_data.get("id_token") or token_data.get("access_token")
         if not token:
-            log.error(f"Geen token van Azure AD B2C: {token_data}")
-            return False
+            raise ValueError(f"Geen token van Azure AD B2C: {token_data}")
 
-        # Sla token op in session state
         st.session_state["irp_token"] = token
-        self._token = token
-        log.info("Token opgeslagen in session state ✓")
+        log.info("Bearer token opgeslagen ✓")
         return True
 
     def is_logged_in(self) -> bool:
@@ -215,7 +213,7 @@ class IRPClient:
                 log.warning(f"Geen CRN voor BL {bl}")
                 return None
             else:
-                log.error(f"HTTP {resp.status_code} voor BL {bl}")
+                log.error(f"HTTP {resp.status_code} voor BL {bl}: {resp.text[:200]}")
                 return None
         except Exception as e:
             log.error(f"Exception get_crn_from_bl({bl}): {e}")
@@ -240,7 +238,7 @@ class IRPClient:
             elif resp.status_code == 404:
                 return None
             else:
-                log.error(f"HTTP {resp.status_code} voor CRN {crn}")
+                log.error(f"HTTP {resp.status_code} voor CRN {crn}: {resp.text[:200]}")
                 return None
         except Exception as e:
             log.error(f"Exception get_tsd_information({crn}): {e}")
