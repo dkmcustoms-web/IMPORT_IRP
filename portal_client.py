@@ -92,9 +92,22 @@ class IRPClient:
             # Fallback: BL only
             log.info(f"Zoeken via BL only: {bl}")
             resp = self._call("GET", f"{BASE_URL}/reference", params={"bl": bl})
-            log.info(f"Reference response HTTP {resp.status_code}: {resp.text[:200]}")
+            log.info(f"Reference response HTTP {resp.status_code}: {resp.text[:300]}")
             if resp.status_code == 200:
-                return resp.json()
+                data = resp.json()
+                log.info(f"Reference data type: {type(data)}, waarde: {data}")
+                # Response kan string zijn ("CRN26...") of dict met crn veld
+                if isinstance(data, str):
+                    return data
+                if isinstance(data, dict):
+                    return data.get("crn")
+                if isinstance(data, list) and len(data) > 0:
+                    item = data[0]
+                    if isinstance(item, str):
+                        return item
+                    if isinstance(item, dict):
+                        return item.get("crn")
+                return str(data)
             elif resp.status_code == 404:
                 log.warning(f"Geen CRN voor BL {bl}")
                 return None
