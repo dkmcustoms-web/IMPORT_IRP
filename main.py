@@ -1,6 +1,6 @@
 """
 DKM Import Release Dashboard
-Streamlit app met login pagina via e-mail verificatiecode
+Token manueel invoeren via de UI
 """
 
 import logging
@@ -22,97 +22,78 @@ log = logging.getLogger(__name__)
 
 API_DELAY = 1.5
 
-# ── Pagina config ─────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="DKM Import Dashboard",
     page_icon="🚢",
     layout="wide",
 )
 
-# DKM stijl
 st.markdown("""
 <style>
-    [data-testid="stSidebar"] { background-color: #3cceff22; }
-    .stButton > button { background-color: #3cceff; color: white; border: none; }
-    .stButton > button:hover { background-color: #1ab5ef; }
+    [data-testid="stSidebar"] { background-color: #e8f9ff; }
     h1 { color: #f35e40; }
+    .token-box { background: #f0f9ff; border: 1px solid #3cceff;
+                 border-radius: 8px; padding: 16px; margin: 8px 0; }
 </style>
 """, unsafe_allow_html=True)
 
-# ── Login pagina ──────────────────────────────────────────────────────────────
-def show_login():
+
+# ── Token pagina ──────────────────────────────────────────────────────────────
+def show_token_page():
     st.title("🚢 DKM Import Dashboard")
-    st.subheader("Inloggen op IRP NxtPort")
 
-    irp = IRPClient()
+    st.markdown("### 🔑 IRP Token invoeren")
 
-    # Stap 1: Login starten
-    if "login_state" not in st.session_state:
-        st.info("Klik op 'Verstuur verificatiecode' om een code naar je e-mail te sturen.")
-        col1, col2 = st.columns([1, 3])
-        with col1:
-            if st.button("📧 Verstuur verificatiecode", use_container_width=True):
-                with st.spinner("Bezig met inloggen..."):
-                    try:
-                        login_state = irp.start_login()
-                        st.session_state["login_state"] = login_state
-                        st.success(f"✅ Code verstuurd naar {st.secrets['irp']['username']}!")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"❌ Fout bij inloggen: {e}")
+    st.markdown("""
+    <div class="token-box">
+    <b>Hoe krijg je de token?</b><br>
+    1. Ga naar <a href="https://irp.nxtport.com" target="_blank">irp.nxtport.com</a> en log in<br>
+    2. Druk <b>F12</b> → tab <b>Network</b> → filter op <b>Fetch/XHR</b><br>
+    3. Klik op een API call (bv. <code>account</code> of <code>session</code>)<br>
+    4. Tab <b>Headers</b> → kopieer de waarde van <code>Authorization</code><br>
+    &nbsp;&nbsp;&nbsp;(alles na "Bearer ", of de volledige "Bearer eyJ..." waarde)
+    </div>
+    """, unsafe_allow_html=True)
 
-    # Stap 2: Code invoeren
-    else:
-        st.success(f"✅ Verificatiecode verstuurd naar e-mail van {st.secrets['irp']['username']}")
-        st.info("Voer de 6-cijferige code in die je per e-mail ontvangen hebt.")
+    token = st.text_area(
+        "Plak hier je Bearer token:",
+        height=120,
+        placeholder="eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...",
+    )
 
-        col1, col2, col3 = st.columns([1, 1, 2])
-        with col1:
-            otp = st.text_input("Verificatiecode", max_chars=8, placeholder="123456")
-        with col2:
-            st.write("")
-            st.write("")
-            if st.button("✅ Bevestigen", use_container_width=True):
-                if otp:
-                    with st.spinner("Code verifiëren..."):
-                        try:
-                            success = irp.complete_login(
-                                st.session_state["login_state"], otp.strip()
-                            )
-                            if success:
-                                st.session_state.pop("login_state", None)
-                                st.success("🎉 Ingelogd!")
-                                st.rerun()
-                            else:
-                                st.error("❌ Ongeldige code. Probeer opnieuw.")
-                                st.session_state.pop("login_state", None)
-                        except Exception as e:
-                            st.error(f"❌ Fout: {e}")
-                            st.session_state.pop("login_state", None)
-                else:
-                    st.warning("Voer eerst de code in.")
-
-        with col3:
-            st.write("")
-            st.write("")
-            if st.button("🔄 Nieuwe code sturen"):
-                st.session_state.pop("login_state", None)
+    if st.button("✅ Token opslaan & inloggen", type="primary"):
+        if token and token.strip():
+            irp = IRPClient()
+            irp.set_token(token.strip())
+            # Test de token
+            with st.spinner("Token verifiëren..."):
+                result = irp.get_crn_from_bl("TEST")
+                # 404 = API werkt maar BL niet gevonden = token OK
+                # None met geen error = ook OK
+                # ValueError = token verlopen
+            if st.session_state.get("irp_token"):
+                st.success("✅ Token opgeslagen! Dashboard laden...")
                 st.rerun()
+        else:
+            st.warning("Voer eerst een token in.")
+
+    st.markdown("---")
+    st.caption("💡 Tip: de token is geldig voor ongeveer 1 uur. Na verloop moet je opnieuw inloggen op irp.nxtport.com en een nieuwe token invoeren.")
 
 
 # ── Polling logica ────────────────────────────────────────────────────────────
 def run_poll(irp: IRPClient):
-    ss  = get_client()
-    ws  = ss.worksheet("Blad1")
+    ss   = get_client()
+    ws   = ss.worksheet("Blad1")
     ensure_headers(ws)
     rows = get_all_rows(ws)
 
-    stats = {"skipped": 0, "crn_found": 0, "mrn_found": 0, "no_mrn_yet": 0, "errors": 0}
-    progress = st.progress(0, text="Bezig met ophalen...")
+    stats    = {"skipped": 0, "crn_found": 0, "mrn_found": 0, "no_mrn_yet": 0, "errors": 0}
     results  = []
+    progress = st.progress(0, text="Bezig...")
 
     for i, row in enumerate(rows):
-        progress.progress((i + 1) / len(rows), text=f"Verwerken: {row['container']}")
+        progress.progress((i + 1) / max(len(rows), 1), text=f"Verwerken: {row['container']}")
         container = row["container"]
         bl        = row["bl"]
         crn       = row["crn"]
@@ -120,7 +101,7 @@ def run_poll(irp: IRPClient):
 
         if mrn and mrn.strip():
             stats["skipped"] += 1
-            results.append({"container": container, "status": "⏭️ Overgeslagen", "mrn": mrn})
+            results.append({"Container": container, "Status": "⏭️ Klaar", "MRN": mrn, "TSD": row["status_tsd"]})
             continue
 
         time.sleep(API_DELAY)
@@ -129,106 +110,91 @@ def run_poll(irp: IRPClient):
             crn_result = irp.get_crn_from_bl(bl)
             if not crn_result:
                 stats["errors"] += 1
-                results.append({"container": container, "status": "❌ CRN niet gevonden", "mrn": ""})
+                results.append({"Container": container, "Status": "❌ CRN niet gevonden", "MRN": "", "TSD": ""})
                 continue
-
-            crn = crn_result
-            tsd = irp.get_tsd_information(crn)
+            crn    = crn_result
+            tsd    = irp.get_tsd_information(crn)
             status = tsd.status_tsd if tsd else ""
             update_row_crn(ws, row["row_index"], crn, status)
             stats["crn_found"] += 1
-
             if tsd and tsd.mrn:
                 update_row_mrn(ws, row["row_index"], tsd.mrn, tsd.status_tsd)
                 stats["mrn_found"] += 1
-                results.append({"container": container, "status": "✅ MRN gevonden", "mrn": tsd.mrn})
+                results.append({"Container": container, "Status": "✅ MRN gevonden", "MRN": tsd.mrn, "TSD": tsd.status_tsd})
             else:
-                results.append({"container": container, "status": f"🟡 Wachten ({status})", "mrn": ""})
+                results.append({"Container": container, "Status": f"🟡 Wachten", "MRN": "", "TSD": status})
                 stats["no_mrn_yet"] += 1
             continue
 
         tsd = irp.get_tsd_information(crn)
         if not tsd:
             stats["errors"] += 1
-            results.append({"container": container, "status": "❌ API fout", "mrn": ""})
+            results.append({"Container": container, "Status": "❌ API fout", "MRN": "", "TSD": ""})
             continue
 
         if tsd.mrn:
             update_row_mrn(ws, row["row_index"], tsd.mrn, tsd.status_tsd)
             stats["mrn_found"] += 1
-            results.append({"container": container, "status": "✅ MRN gevonden", "mrn": tsd.mrn})
+            results.append({"Container": container, "Status": "✅ MRN gevonden", "MRN": tsd.mrn, "TSD": tsd.status_tsd})
         else:
             update_row_poll(ws, row["row_index"], tsd.status_tsd)
             stats["no_mrn_yet"] += 1
-            results.append({"container": container, "status": f"🟡 Wachten ({tsd.status_tsd})", "mrn": ""})
+            results.append({"Container": container, "Status": f"🟡 {tsd.status_tsd}", "MRN": "", "TSD": tsd.status_tsd})
 
     progress.empty()
-    return stats, results, rows
+    return stats, results
 
 
 # ── Dashboard ─────────────────────────────────────────────────────────────────
 def show_dashboard():
     irp = IRPClient()
 
-    # Sidebar
     with st.sidebar:
-        st.image("https://www.dkm-customs.com/wp-content/uploads/2021/03/DKM-logo.png",
-                 use_column_width=True)
-        st.markdown("---")
-        st.success("✅ Ingelogd op IRP")
-        if st.button("🔓 Uitloggen"):
-            st.session_state.pop("irp_token", None)
-            st.rerun()
+        st.markdown("### 🚢 DKM Import")
+        st.success("✅ Token actief")
         st.markdown("---")
         if st.button("🔄 Nu ophalen", use_container_width=True, type="primary"):
             st.session_state["run_poll"] = True
+        st.markdown("---")
+        if st.button("🔑 Nieuwe token invoeren", use_container_width=True):
+            st.session_state.pop("irp_token", None)
+            st.rerun()
+        st.caption("Token vervalt na ±1 uur")
 
     st.title("🚢 DKM Import Dashboard")
-    st.caption("Live MRN status via IRP NxtPort")
 
-    # Poll uitvoeren
     if st.session_state.get("run_poll"):
         st.session_state.pop("run_poll", None)
         try:
-            stats, results, rows = run_poll(irp)
-
-            # Statistieken
-            col1, col2, col3, col4 = st.columns(4)
-            col1.metric("✅ MRN Gevonden", stats["mrn_found"])
-            col2.metric("🟡 Wachten", stats["no_mrn_yet"])
-            col3.metric("⏭️ Overgeslagen", stats["skipped"])
-            col4.metric("❌ Fouten", stats["errors"])
-
-            # Resultaten tabel
+            stats, results = run_poll(irp)
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("✅ MRN Gevonden", stats["mrn_found"])
+            c2.metric("🟡 Wachten", stats["no_mrn_yet"])
+            c3.metric("⏭️ Klaar", stats["skipped"])
+            c4.metric("❌ Fouten", stats["errors"])
             if results:
-                st.markdown("### Resultaten")
                 st.dataframe(results, use_container_width=True)
-
             st.success("✅ Sheet bijgewerkt!")
-
         except ValueError as e:
             if "Token verlopen" in str(e):
-                st.error("⏱️ Sessie verlopen — log opnieuw in.")
+                st.error("⏱️ Token verlopen — voer een nieuwe token in.")
                 st.session_state.pop("irp_token", None)
                 st.rerun()
             else:
                 st.error(f"Fout: {e}")
-
     else:
-        # Sheet tonen
         try:
             ss   = get_client()
             ws   = ss.worksheet("Blad1")
             rows = get_all_rows(ws)
-
             if rows:
                 st.markdown("### 📋 Huidige dossiers")
                 st.dataframe(rows, use_container_width=True)
-                st.caption(f"{len(rows)} dossiers • Klik 'Nu ophalen' om te vernieuwen")
+                st.caption(f"{len(rows)} dossiers • Klik 'Nu ophalen' in de sidebar om te vernieuwen")
             else:
-                st.info("Geen dossiers gevonden in de sheet.")
+                st.info("Geen dossiers gevonden.")
         except Exception as e:
-            st.error(f"Fout bij laden sheet: {e}")
+            st.error(f"Fout bij laden: {e}")
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -236,4 +202,4 @@ irp = IRPClient()
 if irp.is_logged_in():
     show_dashboard()
 else:
-    show_login()
+    show_token_page()
