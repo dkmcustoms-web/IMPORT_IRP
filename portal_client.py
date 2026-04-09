@@ -15,8 +15,8 @@ BASE_URL       = "https://api.irp.nxtport.com/irp-bff/v1"
 FORGEROCK_BASE = "https://login.portofantwerpbruges.com/poam/json/realms/root/realms/portofantwerpbruges"
 AUTH_SERVICE   = "GlobalAuthenticationPolicyLevel25_poab"
 CLIENT_ID      = "ac46ac63-390d-4906-9936-4057f91a93bd"
-REDIRECT_URI   = "https://b2cnxtweuprdirp.b2clogin.com/b2cnxtweuprdirp.onmicrosoft.com/oauth2/authresp"
-AZURE_TOKEN_URL = "https://b2cnxtweuprdirp.b2clogin.com/b2cnxtweuprdirp.onmicrosoft.com/oauth2/v2.0/token"
+REDIRECT_URI   = "https://b2cnxtweuprdiirp.b2clogin.com/b2cnxtweuprdiirp.onmicrosoft.com/oauth2/authresp"
+AZURE_TOKEN_URL = "https://b2cnxtweuprdiirp.b2clogin.com/b2cnxtweuprdiirp.onmicrosoft.com/oauth2/v2.0/token"
 
 AUTH_URL = (
     f"{FORGEROCK_BASE}/authenticate"
