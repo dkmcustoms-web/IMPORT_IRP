@@ -64,22 +64,32 @@ class IRPClient:
         return cookies
 
     def _get_token(self) -> str:
-        # Haal altijd vers token op via sessie cookie
+        """Haal idToken op via sessie cookie."""
         cookies = self._parse_cookies(st.session_state.get("irp_cookies", ""))
         if not cookies:
             raise ValueError("Niet ingelogd — geen cookie beschikbaar.")
         try:
             resp = requests.get(
                 "https://irp.nxtport.com/api/auth/session",
-                headers={"Accept": "application/json", "Content-Type": "application/json"},
+                headers={
+                    "Accept"      : "application/json",
+                    "Content-Type": "application/json",
+                    "User-Agent"  : "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/116.0.0.0",
+                },
                 cookies=cookies,
                 timeout=10,
             )
+            log.info(f"Session HTTP {resp.status_code}, keys: {list(resp.json().keys()) if resp.ok else resp.text[:100]}")
             if resp.status_code == 200:
-                token = resp.json().get("idToken")
+                data = resp.json()
+                token = data.get("idToken")
                 if token:
+                    log.info("idToken opgehaald ✓")
                     return token
-            raise ValueError("Geen idToken in session response")
+                # Log wat er wel in zit
+                log.error(f"Geen idToken. Keys in response: {list(data.keys())}, expires: {data.get('expires')}")
+                raise ValueError("Sessie verlopen — log opnieuw in op irp.nxtport.com en plak nieuwe cookie.")
+            raise ValueError(f"Session HTTP {resp.status_code} — cookie verlopen?")
         except ValueError:
             raise
         except Exception as e:
