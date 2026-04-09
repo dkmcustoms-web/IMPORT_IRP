@@ -66,9 +66,33 @@ class IRPClient:
             raise ValueError("Sessie verlopen — opnieuw inloggen.")
         return resp
 
-    def get_crn_from_bl(self, bl: str) -> str | None:
+    def get_crn_from_bl(self, bl: str, container: str = None, eori: str = None) -> str | None:
+        """
+        Zoek CRN via reference key (BL + container + EORI).
+        Valt terug op BL-only als container/eori niet meegegeven.
+        """
         try:
+            # Probeer eerst via reference key (BL + container + EORI)
+            if container and eori:
+                params = {"bl": bl, "teId": container, "eori": eori}
+                log.info(f"Zoeken via reference key: BL={bl}, container={container}, eori={eori}")
+                resp = self._call("GET", f"{BASE_URL}/search", params=params)
+                log.info(f"Search response HTTP {resp.status_code}: {resp.text[:200]}")
+                if resp.status_code == 200:
+                    data = resp.json()
+                    # Response kan CRN direct zijn of een object met crn veld
+                    if isinstance(data, str):
+                        return data
+                    if isinstance(data, dict):
+                        return data.get("crn")
+                elif resp.status_code == 404:
+                    log.warning(f"Geen resultaat voor BL={bl}, container={container}")
+                    return None
+
+            # Fallback: BL only
+            log.info(f"Zoeken via BL only: {bl}")
             resp = self._call("GET", f"{BASE_URL}/reference", params={"bl": bl})
+            log.info(f"Reference response HTTP {resp.status_code}: {resp.text[:200]}")
             if resp.status_code == 200:
                 return resp.json()
             elif resp.status_code == 404:
@@ -78,7 +102,7 @@ class IRPClient:
                 log.error(f"HTTP {resp.status_code} voor BL {bl}: {resp.text[:200]}")
                 return None
         except Exception as e:
-            log.error(f"Exception get_crn_from_bl({bl}): {e}")
+            log.error(f"Exception get_crn_from_bl: {e}")
             return None
 
     def get_tsd_information(self, crn: str) -> TSDResult | None:

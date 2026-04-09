@@ -100,7 +100,7 @@ def run_poll(irp: IRPClient):
         time.sleep(API_DELAY)
 
         if not crn:
-            crn_result = irp.get_crn_from_bl(bl)
+            crn_result = irp.get_crn_from_bl(bl, container=container, eori=row['eori'])
             if not crn_result:
                 stats["errors"] += 1
                 results.append({"Container": container, "Status": "❌ CRN niet gevonden", "MRN": "", "TSD": ""})
