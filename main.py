@@ -196,6 +196,10 @@ def run_poll(irp: IRPClient):
         if mrn and mrn.strip():
             stats["skipped"] += 1
             log.info(f"[SKIP] {container} — MRN al gevonden: {mrn}, geen poll nodig")
+            # Check of email al verstuurd — zo niet, alsnog sturen
+            if row.get("email_sent") != "✓":
+                log.info(f"[EMAIL] {container} — MRN gekend maar email nog niet verstuurd")
+                _send_mrn_email(ws, row, container, crn, mrn, row["status_tsd"])
             results.append({
                 "DossierId": row["dossier_id"],
                 "Container": container,
