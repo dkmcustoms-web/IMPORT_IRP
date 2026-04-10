@@ -96,7 +96,7 @@ with st.sidebar:
     st.markdown("---")
     if st.button("🔄 Refresh", use_container_width=True):
         st.cache_data.clear(); st.rerun()
-    auto_refresh = st.toggle("Auto-refresh (300s)", value=False)
+    auto_refresh = st.toggle("Auto-refresh (600s)", value=False)
     st.markdown("---")
     st.markdown("**⚙️ Settings**")
     learn_setting = st.toggle("Remember confirmed codes", value=True, key="learn_toggle",
@@ -348,4 +348,4 @@ with tab_all:
     render_items(items_all, allow_actions=False)
 
 if auto_refresh:
-    time.sleep(300); st.rerun()
+    time.sleep(600); st.rerun()
