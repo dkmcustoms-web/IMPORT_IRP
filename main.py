@@ -323,10 +323,15 @@ def show_dashboard():
                 st.success("🟢 Verbonden met NxtPort")
                 st.caption(f"👤 {user.get('email', '')}")
             elif resp.status_code == 200 and not data.get("idToken"):
-                # Sessie bestaat maar token is verlopen
-                st.warning("🟡 Sessie verlopen — nieuwe cookie nodig")
+                st.warning("🟡 Sessie verlopen")
+                if st.button("🔑 Vernieuwen", use_container_width=True, key="renew_sidebar"):
+                    st.session_state.pop("irp_cookies", None)
+                    st.rerun()
             else:
-                st.error(f"🔴 Verbinding mislukt (HTTP {resp.status_code})")
+                st.error(f"🔴 Verbinding mislukt")
+                if st.button("🔑 Nieuwe sessie", use_container_width=True, key="renew_error"):
+                    st.session_state.pop("irp_cookies", None)
+                    st.rerun()
         except Exception as e:
             st.warning(f"🟡 Verbinding onbekend: {e}")
 
@@ -334,7 +339,7 @@ def show_dashboard():
         if st.button("🔄 Nu ophalen", use_container_width=True, type="primary"):
             st.session_state["run_poll"] = True
         st.markdown("---")
-        if st.button("🔑 Nieuwe sessie", use_container_width=True):
+        if st.button("🔑 Nieuwe sessie invoeren", use_container_width=True):
             st.session_state.pop("irp_cookies", None)
             st.rerun()
         st.caption(f"🕐 {now_str()} UTC")
@@ -357,8 +362,8 @@ def show_dashboard():
             st.success("✅ Sheet bijgewerkt!")
 
         except ValueError as e:
-            if "verlopen" in str(e).lower():
-                st.error("⏱️ Sessie verlopen — voer nieuwe cookie in.")
+            if "verlopen" in str(e).lower() or "cookie" in str(e).lower():
+                st.error("⏱️ Sessie verlopen — nieuwe cookie nodig.")
                 st.session_state.pop("irp_cookies", None)
                 st.rerun()
             else:
