@@ -142,10 +142,7 @@ def show_token_page():
         """, unsafe_allow_html=True)
 
         dump_str = st.text_area("Volledige header dump:", height=120,
-            placeholder=":authority: irp.nxtport.com
-:method: GET
-...
-Cookie: ASLBSA=...",
+            placeholder="Plak hier de volledige inhoud van de DevTools call...",
             key="cookie_dump")
 
         if st.button("🔍 Extraheer cookie & inloggen", type="primary", key="btn2"):
