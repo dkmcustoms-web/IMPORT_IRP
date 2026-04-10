@@ -214,6 +214,23 @@ def run_poll(irp: IRPClient):
         time.sleep(API_DELAY)
 
         if not crn:
+            # Check eerst of parameters volledig zijn
+            if not bl or not row["eori"]:
+                stats["errors"] += 1
+                missing = []
+                if not bl: missing.append("BL")
+                if not row["eori"]: missing.append("EORI")
+                results.append({
+                    "DossierId": row["dossier_id"],
+                    "Container": container,
+                    "CRN"      : "",
+                    "Status"   : f"⚠️ Parameters onvolledig ({', '.join(missing)})",
+                    "MRN"      : "",
+                    "TSD"      : "",
+                    "Datum/Uur": now_str(),
+                })
+                continue
+
             crn_result = irp.get_crn_from_bl(bl, container=container, eori=row["eori"])
             if not crn_result:
                 stats["errors"] += 1
@@ -221,7 +238,7 @@ def run_poll(irp: IRPClient):
                     "DossierId": row["dossier_id"],
                     "Container": container,
                     "CRN"      : "",
-                    "Status"   : "❌ CRN niet gevonden",
+                    "Status"   : "❓ Geen CRN in NxtPort",
                     "MRN"      : "",
                     "TSD"      : "",
                     "Datum/Uur": now_str(),
@@ -401,14 +418,22 @@ def show_dashboard():
             ws   = ss.worksheet("Blad1")
             rows = get_all_rows(ws)
             if rows:
+                def _status(r):
+                    if r["mrn_found"]:
+                        return "✅ MRN Gevonden"
+                    if r["crn"]:
+                        return "🟡 Wachten"
+                    if not r["bl"] or not r["eori"]:
+                        return "⚠️ Parameters onvolledig"
+                    if r["last_poll"]:
+                        return "❓ Geen CRN in NxtPort"
+                    return "⏳ Nieuw"
+
                 results = [{
                     "DossierId": r["dossier_id"],
                     "Container": r["container"],
                     "CRN"      : r["crn"],
-                    "Status"   : ("✅ MRN Gevonden"    if r["mrn_found"]
-                                  else "🟡 Wachten"    if r["crn"]
-                                  else "❌ CRN niet gevonden" if r["last_poll"]
-                                  else "⏳ Nieuw"),
+                    "Status"   : _status(r),
                     "MRN"      : r["mrn_found"],
                     "TSD"      : r["status_tsd"],
                     "Datum/Uur": r["last_poll"],
@@ -446,14 +471,16 @@ def _show_results(results: list):
     if not results:
         return
 
-    actief   = [r for r in results if "Wachten" in r["Status"] or "Nieuw" in r["Status"]]
-    klaar    = [r for r in results if "MRN Gevonden" in r["Status"]]
-    geen_crn = [r for r in results if "CRN niet gevonden" in r["Status"] or "API fout" in r["Status"]]
+    actief      = [r for r in results if "Wachten" in r["Status"] or "Nieuw" in r["Status"]]
+    klaar       = [r for r in results if "MRN Gevonden" in r["Status"]]
+    geen_crn    = [r for r in results if "Geen CRN" in r["Status"]]
+    onvolledig  = [r for r in results if "onvolledig" in r["Status"]]
 
-    tab1, tab2, tab3, tab4 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
         f"🟡 Actief ({len(actief)})",
         f"✅ MRN Gevonden ({len(klaar)})",
-        f"❌ CRN niet gevonden ({len(geen_crn)})",
+        f"❓ Geen CRN in NxtPort ({len(geen_crn)})",
+        f"⚠️ Onvolledige parameters ({len(onvolledig)})",
         f"📋 Alle dossiers ({len(results)})",
     ])
 
@@ -471,11 +498,19 @@ def _show_results(results: list):
 
     with tab3:
         if geen_crn:
-            st.dataframe(geen_crn, use_container_width=True, hide_index=True, height=400)
+            st.info("Deze containers zijn correct ingegeven maar hebben nog geen CRN in NxtPort. Ze worden bij elke poll opnieuw gecontroleerd.")
+            st.dataframe(geen_crn, use_container_width=True, hide_index=True, height=350)
         else:
-            st.success("Alle dossiers hebben een CRN.")
+            st.success("Alle dossiers met volledige parameters hebben een CRN.")
 
     with tab4:
+        if onvolledig:
+            st.warning("Vul de ontbrekende parameters aan in de Google Sheet zodat de opzoeking in NxtPort kan gebeuren.")
+            st.dataframe(onvolledig, use_container_width=True, hide_index=True, height=350)
+        else:
+            st.success("Alle dossiers hebben volledige parameters.")
+
+    with tab5:
         st.dataframe(results, use_container_width=True, hide_index=True, height=500)
 
 
