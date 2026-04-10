@@ -28,6 +28,7 @@ COL = {
     "CRN"        : 7,
     "STATUS_TSD" : 8,
     "EMAIL_SENT" : 9,
+    "ETA"        : 10,
 }
 
 
@@ -57,6 +58,9 @@ def ensure_headers(ws: gspread.Worksheet):
     if len(headers) < 9 or headers[8].strip() == "":
         ws.update_cell(1, 9, "EMAIL_SENT")
         log.info("Header toegevoegd: I1 = EMAIL_SENT")
+    if len(headers) < 10 or headers[9].strip() == "":
+        ws.update_cell(1, 10, "ETA")
+        log.info("Header toegevoegd: J1 = ETA")
 
 
 def get_all_rows(ws: gspread.Worksheet) -> list[dict]:
@@ -65,7 +69,7 @@ def get_all_rows(ws: gspread.Worksheet) -> list[dict]:
     for i, row in enumerate(records[1:], start=2):
         while len(row) < 8:
             row.append("")
-        while len(row) < 9:
+        while len(row) < 10:
             row.append("")
         rows.append({
             "row_index"  : i,
@@ -78,6 +82,7 @@ def get_all_rows(ws: gspread.Worksheet) -> list[dict]:
             "crn"        : row[6].strip(),
             "status_tsd" : row[7],
             "email_sent" : row[8].strip(),
+            "eta"        : row[9].strip(),
         })
     return [r for r in rows if r["container"]]
 

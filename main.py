@@ -72,6 +72,35 @@ def now_str() -> str:
     return datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M")
 
 
+def parse_eta(eta_str: str):
+    """Parseer ETA datum string (DD/MM/YYYY of YYYY-MM-DD). Geeft date object terug of None."""
+    if not eta_str or not eta_str.strip():
+        return None
+    for fmt in ["%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%d/%m/%y"]:
+        try:
+            return datetime.strptime(eta_str.strip(), fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def should_poll(row: dict) -> tuple[bool, str]:
+    """
+    Bepaal of een container gepolled moet worden.
+    Geeft (True, "") terug als polling nodig is.
+    Geeft (False, status_msg) terug als polling overgeslagen wordt.
+    """
+    eta_str = row.get("eta", "")
+    eta = parse_eta(eta_str)
+    if eta is None:
+        return True, ""  # Geen ETA → altijd pollen
+    today = datetime.now(timezone.utc).date()
+    drempel = today + timedelta(days=7)
+    if eta > drempel:
+        return False, f"📅 ETA {eta.strftime('%d/%m/%Y')}"
+    return True, ""
+
+
 import re as _re
 
 def extract_cookie_from_dump(text: str) -> str | None:
@@ -191,6 +220,22 @@ def run_poll(irp: IRPClient):
         bl        = row["bl"]
         crn       = row["crn"]
         mrn       = row["mrn_found"]
+
+        # ETA check → overslaan als ETA meer dan 7 dagen in de toekomst
+        poll_ok, eta_status = should_poll(row)
+        if not poll_ok:
+            stats["skipped"] += 1
+            results.append({
+                "DossierId": row["dossier_id"],
+                "Container": container,
+                "CRN"      : crn,
+                "Status"   : eta_status,
+                "MRN"      : "",
+                "TSD"      : row["status_tsd"],
+                "Datum/Uur": row["last_poll"],
+                "ETA"      : row.get("eta", ""),
+            })
+            continue
 
         # MRN al gevonden → overslaan, datum NIET updaten, geen poll nodig
         if mrn and mrn.strip():
@@ -422,9 +467,17 @@ def show_dashboard():
                     if r["mrn_found"]:
                         return "✅ MRN Gevonden"
                     if r["crn"]:
+                        # Check ETA
+                        poll_ok, eta_st = should_poll(r)
+                        if not poll_ok:
+                            return eta_st
                         return "🟡 Wachten"
                     if not r["bl"] or not r["eori"]:
                         return "⚠️ Parameters onvolledig"
+                    # Check ETA ook voor nieuwe containers
+                    poll_ok, eta_st = should_poll(r)
+                    if not poll_ok:
+                        return eta_st
                     if r["last_poll"]:
                         return "❓ Geen CRN in NxtPort"
                     return "⏳ Nieuw"
@@ -437,6 +490,7 @@ def show_dashboard():
                     "MRN"      : r["mrn_found"],
                     "TSD"      : r["status_tsd"],
                     "Datum/Uur": r["last_poll"],
+                    "ETA"      : r.get("eta", ""),
                 } for r in rows]
                 _show_results(results)
                 st.caption(f"{len(rows)} dossiers • Klik 'Nu ophalen' in de sidebar")
@@ -475,10 +529,12 @@ def _show_results(results: list):
     klaar       = [r for r in results if "MRN Gevonden" in r["Status"]]
     geen_crn    = [r for r in results if "Geen CRN" in r["Status"]]
     onvolledig  = [r for r in results if "onvolledig" in r["Status"]]
+    eta_wacht   = [r for r in results if "📅 ETA" in r["Status"]]
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         f"🟡 Actief ({len(actief)})",
         f"✅ MRN Gevonden ({len(klaar)})",
+        f"📅 ETA — nog niet aan bod ({len(eta_wacht)})",
         f"❓ Geen CRN in NxtPort ({len(geen_crn)})",
         f"⚠️ Onvolledige parameters ({len(onvolledig)})",
         f"📋 Alle dossiers ({len(results)})",
@@ -497,20 +553,27 @@ def _show_results(results: list):
             st.info("Nog geen MRN gevonden.")
 
     with tab3:
+        if eta_wacht:
+            st.info("Deze containers worden nog niet gepolled — hun ETA is meer dan 7 dagen in de toekomst. Polling start automatisch wanneer de ETA binnen 7 dagen valt.")
+            st.dataframe(eta_wacht, use_container_width=True, hide_index=True, height=350)
+        else:
+            st.success("Geen containers in ETA-wachtstatus.")
+
+    with tab4:
         if geen_crn:
             st.info("Deze containers zijn correct ingegeven maar hebben nog geen CRN in NxtPort. Ze worden bij elke poll opnieuw gecontroleerd.")
             st.dataframe(geen_crn, use_container_width=True, hide_index=True, height=350)
         else:
             st.success("Alle dossiers met volledige parameters hebben een CRN.")
 
-    with tab4:
+    with tab5:
         if onvolledig:
             st.warning("Vul de ontbrekende parameters aan in de Google Sheet zodat de opzoeking in NxtPort kan gebeuren.")
             st.dataframe(onvolledig, use_container_width=True, hide_index=True, height=350)
         else:
             st.success("Alle dossiers hebben volledige parameters.")
 
-    with tab5:
+    with tab6:
         st.dataframe(results, use_container_width=True, hide_index=True, height=500)
 
 
