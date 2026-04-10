@@ -17,7 +17,9 @@ from sheets_client import (
     update_row_poll,
     save_cookie,
     load_cookie,
+    mark_email_sent,
 )
+from email_client import send_mrn_notification
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -230,6 +232,7 @@ def run_poll(irp: IRPClient):
             if tsd and tsd.mrn:
                 update_row_mrn(ws, row["row_index"], tsd.mrn, tsd.status_tsd)
                 stats["mrn_found"] += 1
+                _send_mrn_email(ws, row, container, crn, tsd.mrn, tsd.status_tsd)
                 results.append({
                     "DossierId": row["dossier_id"],
                     "Container": container,
@@ -269,6 +272,7 @@ def run_poll(irp: IRPClient):
         if tsd.mrn:
             update_row_mrn(ws, row["row_index"], tsd.mrn, tsd.status_tsd)
             stats["mrn_found"] += 1
+            _send_mrn_email(ws, row, container, crn, tsd.mrn, tsd.status_tsd)
             results.append({
                 "DossierId": row["dossier_id"],
                 "Container": container,
@@ -403,6 +407,26 @@ def show_dashboard():
                 st.info("Geen dossiers gevonden.")
         except Exception as e:
             st.error(f"Fout: {e}")
+
+
+def _send_mrn_email(ws, row: dict, container: str, crn: str, mrn: str, status_tsd: str):
+    """Stuur MRN notificatie email — max 1x per container."""
+    if row.get("email_sent") == "✓":
+        log.info(f"Email al verstuurd voor {container} — overgeslagen")
+        return
+    ok = send_mrn_notification(
+        dossier_id = row.get("dossier_id", ""),
+        container  = container,
+        bl         = row.get("bl", ""),
+        crn        = crn,
+        mrn        = mrn,
+        status_tsd = status_tsd,
+    )
+    if ok:
+        mark_email_sent(ws, row["row_index"])
+        log.info(f"MRN email verstuurd voor {container}")
+    else:
+        log.error(f"E-mail versturen mislukt voor {container}")
 
 
 def _show_results(results: list):

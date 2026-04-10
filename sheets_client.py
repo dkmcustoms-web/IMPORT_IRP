@@ -27,6 +27,7 @@ COL = {
     "MRN_FOUND"  : 6,
     "CRN"        : 7,
     "STATUS_TSD" : 8,
+    "EMAIL_SENT" : 9,
 }
 
 
@@ -45,7 +46,7 @@ def now_str() -> str:
 
 
 def ensure_headers(ws: gspread.Worksheet):
-    """Voeg CRN en STATUS_TSD kolommen toe als die nog niet bestaan."""
+    """Voeg ontbrekende kolommen toe."""
     headers = ws.row_values(1)
     if len(headers) < 7 or headers[6].strip() == "":
         ws.update_cell(1, 7, "CRN")
@@ -53,6 +54,9 @@ def ensure_headers(ws: gspread.Worksheet):
     if len(headers) < 8 or headers[7].strip() == "":
         ws.update_cell(1, 8, "STATUS_TSD")
         log.info("Header toegevoegd: H1 = STATUS_TSD")
+    if len(headers) < 9 or headers[8].strip() == "":
+        ws.update_cell(1, 9, "EMAIL_SENT")
+        log.info("Header toegevoegd: I1 = EMAIL_SENT")
 
 
 def get_all_rows(ws: gspread.Worksheet) -> list[dict]:
@@ -60,6 +64,8 @@ def get_all_rows(ws: gspread.Worksheet) -> list[dict]:
     rows = []
     for i, row in enumerate(records[1:], start=2):
         while len(row) < 8:
+            row.append("")
+        while len(row) < 9:
             row.append("")
         rows.append({
             "row_index"  : i,
@@ -71,6 +77,7 @@ def get_all_rows(ws: gspread.Worksheet) -> list[dict]:
             "mrn_found"  : row[5],
             "crn"        : row[6].strip(),
             "status_tsd" : row[7],
+            "email_sent" : row[8].strip(),
         })
     return [r for r in rows if r["container"]]
 
@@ -138,3 +145,9 @@ def load_cookie() -> str | None:
     except Exception as e:
         log.warning(f"Geen cookie gevonden in sheet: {e}")
         return None
+
+
+def mark_email_sent(ws: gspread.Worksheet, row_index: int):
+    """Markeer dat de e-mail verstuurd is voor dit dossier."""
+    ws.update_cell(row_index, COL["EMAIL_SENT"], "✓")
+    log.info(f"Email gestuurd gemarkeerd voor rij {row_index}")
