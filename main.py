@@ -355,6 +355,8 @@ def show_dashboard():
         if st.button("🔄 Nu ophalen", use_container_width=True, type="primary"):
             st.session_state["run_poll"] = True
         st.markdown("---")
+        sidebar_stats = st.container()
+        st.markdown("---")
         if st.button("🔑 Nieuwe sessie invoeren", use_container_width=True):
             st.session_state.pop("irp_cookies", None)
             try:
@@ -370,24 +372,29 @@ def show_dashboard():
     if st.session_state.get("run_poll"):
         st.session_state.pop("run_poll", None)
         try:
-            stats, results = run_poll(irp)
+            with st.spinner("Bezig met ophalen..."):
+                stats, results = run_poll(irp)
 
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("✅ MRN Gevonden", stats["mrn_found"])
-            c2.metric("🟡 Wachten",      stats["no_mrn_yet"])
-            c3.metric("⏭️ Klaar",        stats["skipped"])
-            c4.metric("❌ Fouten",        stats["errors"])
+            # Statistieken in sidebar
+            with sidebar_stats:
+                st.markdown("**Laatste run:**")
+                st.metric("✅ MRN Gevonden", stats["mrn_found"])
+                st.metric("🟡 Wachten",      stats["no_mrn_yet"])
+                st.metric("⏭️ Klaar",        stats["skipped"])
+                st.metric("❌ Fouten",        stats["errors"])
+                st.success("✅ Sheet bijgewerkt!")
 
             _show_results(results)
-            st.success("✅ Sheet bijgewerkt!")
 
         except ValueError as e:
             if "verlopen" in str(e).lower() or "cookie" in str(e).lower():
-                st.error("⏱️ Sessie verlopen — nieuwe cookie nodig.")
+                with sidebar_stats:
+                    st.error("⏱️ Sessie verlopen!")
                 st.session_state.pop("irp_cookies", None)
                 st.rerun()
             else:
-                st.error(f"Fout: {e}")
+                with sidebar_stats:
+                    st.error(f"Fout: {e}")
     else:
         try:
             ss   = get_client()
@@ -398,15 +405,16 @@ def show_dashboard():
                     "DossierId": r["dossier_id"],
                     "Container": r["container"],
                     "CRN"      : r["crn"],
-                    "Status"   : ("✅ MRN Gevonden" if r["mrn_found"]
-                                  else "🟡 Wachten" if r["crn"]
+                    "Status"   : ("✅ MRN Gevonden"    if r["mrn_found"]
+                                  else "🟡 Wachten"    if r["crn"]
+                                  else "❌ CRN niet gevonden" if r["last_poll"]
                                   else "⏳ Nieuw"),
                     "MRN"      : r["mrn_found"],
                     "TSD"      : r["status_tsd"],
                     "Datum/Uur": r["last_poll"],
                 } for r in rows]
                 _show_results(results)
-                st.caption(f"{len(rows)} dossiers • Klik 'Nu ophalen' om te vernieuwen")
+                st.caption(f"{len(rows)} dossiers • Klik 'Nu ophalen' in de sidebar")
             else:
                 st.info("Geen dossiers gevonden.")
         except Exception as e:
@@ -438,29 +446,37 @@ def _show_results(results: list):
     if not results:
         return
 
-    actief  = [r for r in results if "Wachten" in r["Status"] or "Nieuw" in r["Status"] or "Fout" in r["Status"]]
-    klaar   = [r for r in results if "MRN Gevonden" in r["Status"]]
+    actief   = [r for r in results if "Wachten" in r["Status"] or "Nieuw" in r["Status"]]
+    klaar    = [r for r in results if "MRN Gevonden" in r["Status"]]
+    geen_crn = [r for r in results if "CRN niet gevonden" in r["Status"] or "API fout" in r["Status"]]
 
-    tab1, tab2, tab3 = st.tabs([
-        f"🟡 Actief / Pre-lodged ({len(actief)})",
+    tab1, tab2, tab3, tab4 = st.tabs([
+        f"🟡 Actief ({len(actief)})",
         f"✅ MRN Gevonden ({len(klaar)})",
+        f"❌ CRN niet gevonden ({len(geen_crn)})",
         f"📋 Alle dossiers ({len(results)})",
     ])
 
     with tab1:
         if actief:
-            st.dataframe(actief, use_container_width=True, hide_index=True)
+            st.dataframe(actief, use_container_width=True, hide_index=True, height=400)
         else:
             st.info("Geen actieve dossiers.")
 
     with tab2:
         if klaar:
-            st.dataframe(klaar, use_container_width=True, hide_index=True)
+            st.dataframe(klaar, use_container_width=True, hide_index=True, height=400)
         else:
             st.info("Nog geen MRN gevonden.")
 
     with tab3:
-        st.dataframe(results, use_container_width=True, hide_index=True)
+        if geen_crn:
+            st.dataframe(geen_crn, use_container_width=True, hide_index=True, height=400)
+        else:
+            st.success("Alle dossiers hebben een CRN.")
+
+    with tab4:
+        st.dataframe(results, use_container_width=True, hide_index=True, height=500)
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
