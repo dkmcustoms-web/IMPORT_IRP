@@ -156,3 +156,14 @@ def mark_email_sent(ws: gspread.Worksheet, row_index: int):
     """Markeer dat de e-mail verstuurd is voor dit dossier."""
     ws.update_cell(row_index, COL["EMAIL_SENT"], "✓")
     log.info(f"Email gestuurd gemarkeerd voor rij {row_index}")
+
+
+def add_dossier(ws: gspread.Worksheet, dossier_id: str, container: str, bl: str, eori: str, eta: str = "") -> int:
+    """Voeg een nieuw dossier toe aan de Google Sheet. Geeft het rijnummer terug."""
+    from datetime import datetime, timezone
+    new_row = [dossier_id, container, bl, eori, "", "", "", "", "", eta]
+    ws.append_row(new_row, value_input_option="USER_ENTERED")
+    all_values = ws.get_all_values()
+    row_index = len(all_values)
+    log.info(f"Nieuw dossier toegevoegd: {dossier_id} / {container} op rij {row_index}")
+    return row_index

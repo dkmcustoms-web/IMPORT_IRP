@@ -18,6 +18,7 @@ from sheets_client import (
     save_cookie,
     load_cookie,
     mark_email_sent,
+    add_dossier,
 )
 from email_client import send_mrn_notification
 
@@ -416,6 +417,10 @@ def show_dashboard():
         st.markdown("---")
         if st.button("🔄 Nu ophalen", use_container_width=True, type="primary"):
             st.session_state["run_poll"] = True
+            st.session_state["page"] = "dashboard"
+        if st.button("➕ Nieuw dossier", use_container_width=True):
+            st.session_state["page"] = "nieuw"
+            st.rerun()
         st.markdown("---")
         sidebar_stats = st.container()
         st.markdown("---")
@@ -577,10 +582,72 @@ def _show_results(results: list):
         st.dataframe(results, use_container_width=True, hide_index=True, height=500)
 
 
+def show_nieuw_dossier():
+    """Pagina om een nieuw dossier toe te voegen."""
+    st.title("➕ Nieuw dossier toevoegen")
+
+    with st.sidebar:
+        st.markdown("### 🚢 DKM Import")
+        st.markdown("---")
+        if st.button("← Terug naar dashboard", use_container_width=True):
+            st.session_state["page"] = "dashboard"
+            st.rerun()
+
+    st.markdown("Vul alle velden in om een nieuw dossier toe te voegen aan de Google Sheet.")
+    st.markdown("---")
+
+    with st.form("nieuw_dossier_form", clear_on_submit=True):
+        col1, col2 = st.columns(2)
+
+        with col1:
+            dossier_id = st.text_input("Dossier ID *", placeholder="244999")
+            container  = st.text_input("Container nummer *", placeholder="MSCU1234567")
+            bl         = st.text_input("Bill of Lading (BL) *", placeholder="MEDUXO084545")
+
+        with col2:
+            eori       = st.text_input("EORI Ship Agent *", placeholder="BE0464255361")
+            eta_input  = st.date_input("ETA (verwachte aankomst)", value=None)
+            st.caption("ETA is optioneel — laat leeg als onbekend")
+
+        st.markdown("---")
+        submitted = st.form_submit_button("✅ Dossier toevoegen", type="primary", use_container_width=True)
+
+        if submitted:
+            # Validatie
+            errors = []
+            if not dossier_id.strip(): errors.append("Dossier ID")
+            if not container.strip():  errors.append("Container nummer")
+            if not bl.strip():         errors.append("Bill of Lading")
+            if not eori.strip():       errors.append("EORI Ship Agent")
+
+            if errors:
+                st.error(f"❌ Vul de verplichte velden in: {', '.join(errors)}")
+            else:
+                eta_str = eta_input.strftime("%d/%m/%Y") if eta_input else ""
+                try:
+                    ss = get_client()
+                    ws = ss.worksheet("Blad1")
+                    add_dossier(ws,
+                        dossier_id = dossier_id.strip(),
+                        container  = container.strip().upper(),
+                        bl         = bl.strip(),
+                        eori       = eori.strip(),
+                        eta        = eta_str,
+                    )
+                    st.success(f"✅ Dossier {dossier_id.strip()} — {container.strip().upper()} succesvol toegevoegd!")
+                    st.balloons()
+                except Exception as e:
+                    st.error(f"❌ Fout bij opslaan: {e}")
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 auto_load_cookie()
 irp = IRPClient()
-if irp.is_logged_in():
-    show_dashboard()
-else:
+
+if not irp.is_logged_in():
     show_token_page()
+elif st.session_state.get("page") == "nieuw":
+    show_nieuw_dossier()
+else:
+    st.session_state["page"] = "dashboard"
+    show_dashboard()
