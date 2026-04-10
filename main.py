@@ -30,7 +30,7 @@ def auto_load_cookie():
     if not st.session_state.get("irp_cookies"):
         try:
             cookie = load_cookie()
-            if cookie:
+            if cookie and len(cookie) > 50:  # lege of gewiste cookie negeren
                 st.session_state["irp_cookies"] = cookie
                 log.info("Cookie automatisch geladen uit sheet")
         except Exception as e:
@@ -326,11 +326,19 @@ def show_dashboard():
                 st.warning("🟡 Sessie verlopen")
                 if st.button("🔑 Vernieuwen", use_container_width=True, key="renew_sidebar"):
                     st.session_state.pop("irp_cookies", None)
+                    try:
+                        save_cookie("")
+                    except Exception:
+                        pass
                     st.rerun()
             else:
                 st.error(f"🔴 Verbinding mislukt")
                 if st.button("🔑 Nieuwe sessie", use_container_width=True, key="renew_error"):
                     st.session_state.pop("irp_cookies", None)
+                    try:
+                        save_cookie("")
+                    except Exception:
+                        pass
                     st.rerun()
         except Exception as e:
             st.warning(f"🟡 Verbinding onbekend: {e}")
@@ -341,6 +349,10 @@ def show_dashboard():
         st.markdown("---")
         if st.button("🔑 Nieuwe sessie invoeren", use_container_width=True):
             st.session_state.pop("irp_cookies", None)
+            try:
+                save_cookie("")  # Wis ook de cookie in de sheet
+            except Exception:
+                pass
             st.rerun()
         st.caption(f"🕐 {now_str()} UTC")
 
