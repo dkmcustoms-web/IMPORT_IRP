@@ -74,37 +74,29 @@ import re as _re
 
 def extract_cookie_from_dump(text: str) -> str | None:
     """Extraheer de Cookie waarde uit een volledige DevTools header dump."""
-    # Methode 1: Zoek "Cookie:" header gevolgd door waarde
-    m = _re.search(r'Cookie:\s*
-(.*?)(?=
-\S|\Z)', text, _re.DOTALL | _re.IGNORECASE)
-    if m:
-        candidate = m.group(1).strip()
-        if '__Secure-next-auth' in candidate or 'ASLBSA=' in candidate:
-            return candidate
+    lines = text.split("\n")
 
-    # Methode 2: Zoek de cookie waarde direct (begint met ASLBSA=)
-    m2 = _re.search(r'(ASLBSA=[^
-]+(?:
-[^
-:]+)*)', text)
-    if m2:
-        candidate = m2.group(1).strip().replace('
-', '')
-        if '__Secure-next-auth' in candidate:
-            return candidate
-
-    # Methode 3: Alle regels samenvoegen die cookie-achtig zijn
-    lines = text.split('
-')
+    # Methode 1: Zoek "Cookie:" label gevolgd door waarde op volgende regel
     for i, line in enumerate(lines):
-        if 'ASLBSA=' in line and '__Secure-next-auth' in line:
-            return line.strip()
-        if line.strip().lower() in ['cookie:', 'cookie']:
-            if i + 1 < len(lines):
-                candidate = lines[i+1].strip()
-                if 'ASLBSA=' in candidate or '__Secure-next-auth' in candidate:
-                    return candidate
+        stripped = line.strip().rstrip(":")
+        if stripped.lower() == "cookie" and i + 1 < len(lines):
+            candidate = lines[i + 1].strip()
+            if "ASLBSA=" in candidate or "__Secure-next-auth" in candidate:
+                return candidate
+
+    # Methode 2: Zoek een regel die de cookie waarde bevat
+    for line in lines:
+        stripped = line.strip()
+        if "ASLBSA=" in stripped and "__Secure-next-auth" in stripped:
+            return stripped
+
+    # Methode 3: Combineer meerdere regels na Cookie:
+    for i, line in enumerate(lines):
+        if "Cookie:" in line:
+            # Cookie staat misschien op dezelfde regel
+            after = line.split("Cookie:", 1)[1].strip()
+            if after and ("ASLBSA=" in after or "__Secure-next-auth" in after):
+                return after
 
     return None
 
