@@ -70,41 +70,117 @@ def now_str() -> str:
     return datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M")
 
 
+import re as _re
+
+def extract_cookie_from_dump(text: str) -> str | None:
+    """Extraheer de Cookie waarde uit een volledige DevTools header dump."""
+    # Methode 1: Zoek "Cookie:" header gevolgd door waarde
+    m = _re.search(r'Cookie:\s*
+(.*?)(?=
+\S|\Z)', text, _re.DOTALL | _re.IGNORECASE)
+    if m:
+        candidate = m.group(1).strip()
+        if '__Secure-next-auth' in candidate or 'ASLBSA=' in candidate:
+            return candidate
+
+    # Methode 2: Zoek de cookie waarde direct (begint met ASLBSA=)
+    m2 = _re.search(r'(ASLBSA=[^
+]+(?:
+[^
+:]+)*)', text)
+    if m2:
+        candidate = m2.group(1).strip().replace('
+', '')
+        if '__Secure-next-auth' in candidate:
+            return candidate
+
+    # Methode 3: Alle regels samenvoegen die cookie-achtig zijn
+    lines = text.split('
+')
+    for i, line in enumerate(lines):
+        if 'ASLBSA=' in line and '__Secure-next-auth' in line:
+            return line.strip()
+        if line.strip().lower() in ['cookie:', 'cookie']:
+            if i + 1 < len(lines):
+                candidate = lines[i+1].strip()
+                if 'ASLBSA=' in candidate or '__Secure-next-auth' in candidate:
+                    return candidate
+
+    return None
+
+
 # ── Token pagina ──────────────────────────────────────────────────────────────
 def show_token_page():
     st.title("🚢 DKM Import Dashboard")
     st.subheader("🔑 Sessie invoeren")
 
-    st.markdown("""
-    <div style="background:#f0f9ff;border:1px solid #3cceff;border-radius:8px;padding:16px;margin:8px 0">
-    <b>Hoe krijg je de sessie cookie?</b><br>
-    1. Ga naar <a href="https://irp.nxtport.com" target="_blank">irp.nxtport.com</a> en log in<br>
-    2. Druk <b>F12</b> → tab <b>Network</b> → filter op <b>Fetch/XHR</b><br>
-    3. Klik op de request <b>session</b><br>
-    4. Tab <b>Headers</b> → zoek <b>Cookie</b> onder Request Headers<br>
-    5. Kopieer de volledige Cookie waarde en plak hieronder
-    </div>
-    """, unsafe_allow_html=True)
+    tab1, tab2 = st.tabs(["📋 Methode 1 — Cookie plakken", "📄 Methode 2 — Volledige call dump"])
 
-    cookie_str = st.text_area("Cookie:", height=100,
-        placeholder="ASLBSA=...; __Secure-next-auth.session-token.0=eyJ...")
+    with tab1:
+        st.markdown("""
+        <div style="background:#1a2a3a;border:1px solid #3cceff;border-radius:8px;padding:14px;margin:8px 0;color:#e0e0e0">
+        <b style="color:#3cceff">Stap voor stap:</b><br>
+        1. Ga naar <a href="https://irp.nxtport.com" target="_blank" style="color:#3cceff">irp.nxtport.com</a> en log in<br>
+        2. Druk <b>F12</b> → tab <b>Network</b> → filter op <b>Fetch/XHR</b><br>
+        3. Klik op de request <b>session</b><br>
+        4. Tab <b>Headers</b> → zoek <b>Cookie</b> onder Request Headers<br>
+        5. Kopieer de volledige Cookie waarde en plak hieronder
+        </div>
+        """, unsafe_allow_html=True)
 
-    if st.button("✅ Opslaan & inloggen", type="primary"):
-        if cookie_str and cookie_str.strip():
-            irp = IRPClient()
-            irp.set_cookies(cookie_str.strip())
-            # Opslaan in Google Sheet voor hergebruik
-            try:
-                save_cookie(cookie_str.strip())
-                st.success("✅ Sessie opgeslagen en bewaard in Google Sheet!")
-            except Exception as e:
-                st.success("✅ Sessie opgeslagen!")
-                st.warning(f"Kon niet opslaan in sheet: {e}")
-            st.rerun()
-        else:
-            st.warning("Voer eerst de cookie in.")
+        cookie_str = st.text_area("Cookie waarde:", height=80,
+            placeholder="ASLBSA=...; __Secure-next-auth.session-token.0=eyJ...",
+            key="cookie_direct")
+
+        if st.button("✅ Opslaan & inloggen", type="primary", key="btn1"):
+            if cookie_str and cookie_str.strip():
+                _save_and_login(cookie_str.strip())
+            else:
+                st.warning("Voer eerst de cookie in.")
+
+    with tab2:
+        st.markdown("""
+        <div style="background:#1a2a3a;border:1px solid #3cceff;border-radius:8px;padding:14px;margin:8px 0;color:#e0e0e0">
+        <b style="color:#3cceff">Plak hier de volledige inhoud van de DevTools call:</b><br>
+        1. Ga naar <a href="https://irp.nxtport.com" target="_blank" style="color:#3cceff">irp.nxtport.com</a> en log in<br>
+        2. Druk <b>F12</b> → tab <b>Network</b> → klik op <b>session</b> request<br>
+        3. Klik rechtsboven op <b>Copy</b> → <b>Copy request headers</b><br>
+        4. Plak alles hieronder — de app extraheert automatisch de cookie
+        </div>
+        """, unsafe_allow_html=True)
+
+        dump_str = st.text_area("Volledige header dump:", height=120,
+            placeholder=":authority: irp.nxtport.com
+:method: GET
+...
+Cookie: ASLBSA=...",
+            key="cookie_dump")
+
+        if st.button("🔍 Extraheer cookie & inloggen", type="primary", key="btn2"):
+            if dump_str and dump_str.strip():
+                cookie = extract_cookie_from_dump(dump_str.strip())
+                if cookie:
+                    st.info(f"Cookie gevonden ({len(cookie)} tekens) ✓")
+                    _save_and_login(cookie)
+                else:
+                    st.error("❌ Geen cookie gevonden in de dump. Probeer Methode 1.")
+            else:
+                st.warning("Plak eerst de header dump.")
 
     st.caption("💡 De cookie is geldig tot middernacht. Daarna opnieuw invoeren.")
+
+
+def _save_and_login(cookie_str: str):
+    """Sla cookie op en log in."""
+    irp = IRPClient()
+    irp.set_cookies(cookie_str)
+    try:
+        save_cookie(cookie_str)
+        st.success("✅ Ingelogd en cookie bewaard in Google Sheet!")
+    except Exception as e:
+        st.success("✅ Ingelogd!")
+        st.warning(f"Kon niet opslaan in sheet: {e}")
+    st.rerun()
 
 
 # ── Polling logica ────────────────────────────────────────────────────────────

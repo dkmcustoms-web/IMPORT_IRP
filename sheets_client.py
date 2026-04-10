@@ -104,13 +104,18 @@ def save_cookie(cookie_str: str):
     try:
         ws = ss.worksheet("Config")
     except Exception:
-        ws = ss.add_worksheet(title="Config", rows=10, cols=2)
-        ws.update("A1", "KEY")
-        ws.update("B1", "VALUE")
-    # Schrijf cookie naar rij 2
-    ws.update("A2", "irp_cookie")
-    ws.update("B2", cookie_str)
-    log.info("Cookie opgeslagen in Google Sheet (Config tab)")
+        ws = ss.add_worksheet(title="Config", rows=10, cols=3)
+        ws.update_cell(1, 1, "KEY")
+        ws.update_cell(1, 2, "VALUE")
+    # Cookie is te lang voor 1 cel — splits in 2 stukken
+    half = len(cookie_str) // 2
+    part1 = cookie_str[:half]
+    part2 = cookie_str[half:]
+    ws.update_cell(2, 1, "irp_cookie_1")
+    ws.update_cell(2, 2, part1)
+    ws.update_cell(3, 1, "irp_cookie_2")
+    ws.update_cell(3, 2, part2)
+    log.info(f"Cookie opgeslagen in Config tab ({len(cookie_str)} tekens, 2 delen)")
 
 
 def load_cookie() -> str | None:
@@ -119,12 +124,16 @@ def load_cookie() -> str | None:
         ss = get_client()
         ws = ss.worksheet("Config")
         records = ws.get_all_values()
-        for row in records[1:]:
-            if len(row) >= 2 and row[0] == "irp_cookie":
-                cookie = row[1].strip()
-                if cookie:
-                    log.info("Cookie geladen uit Google Sheet")
-                    return cookie
+        data = {row[0]: row[1] for row in records[1:] if len(row) >= 2}
+        # Probeer gesplitste cookie
+        if "irp_cookie_1" in data and "irp_cookie_2" in data:
+            cookie = data["irp_cookie_1"] + data["irp_cookie_2"]
+            if cookie.strip():
+                log.info(f"Cookie geladen uit Config tab ({len(cookie)} tekens)")
+                return cookie
+        # Fallback: oude enkelvoudige cookie
+        if "irp_cookie" in data and data["irp_cookie"].strip():
+            return data["irp_cookie"]
         return None
     except Exception as e:
         log.warning(f"Geen cookie gevonden in sheet: {e}")
