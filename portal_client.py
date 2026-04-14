@@ -7,7 +7,7 @@ API: api.irp.nxtport.com/irp-bff/v1/tsd/...
 import logging
 import requests
 import streamlit as st
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 log = logging.getLogger(__name__)
 
@@ -33,28 +33,6 @@ class IRPClient:
 
     def set_cookies(self, cookie_str: str):
         st.session_state["irp_cookies"] = cookie_str.strip()
-        # Haal meteen het idToken op en sla op
-        self._fetch_id_token()
-
-    def _fetch_id_token(self):
-        """Haal het idToken op via de session endpoint."""
-        try:
-            cookies = self._parse_cookies(st.session_state.get("irp_cookies", ""))
-            resp = requests.get(
-                "https://irp.nxtport.com/api/auth/session",
-                headers={"Accept": "application/json", "Content-Type": "application/json"},
-                cookies=cookies,
-                timeout=10,
-            )
-            if resp.status_code == 200:
-                token = resp.json().get("idToken")
-                if token:
-                    st.session_state["irp_id_token"] = token
-                    log.info("idToken opgehaald ✓")
-                else:
-                    log.error("Geen idToken in session response")
-        except Exception as e:
-            log.error(f"Fout bij ophalen idToken: {e}")
 
     def _parse_cookies(self, cookie_str: str) -> dict:
         cookies = {}
@@ -74,23 +52,19 @@ class IRPClient:
             resp = requests.get(
                 "https://irp.nxtport.com/api/auth/session",
                 headers={
-                    "Accept"      : "application/json",
-                    "Content-Type": "application/json",
-                    "User-Agent"  : "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/116.0.0.0",
+                    "Accept"       : "application/json",
+                    "Content-Type" : "application/json",
+                    "User-Agent"   : "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/116.0.0.0",
                 },
                 cookies=cookies,
                 timeout=10,
             )
-            log.info(f"Session HTTP {resp.status_code}, keys: {list(resp.json().keys()) if resp.ok else resp.text[:100]}")
             if resp.status_code == 200:
-                data = resp.json()
+                data  = resp.json()
                 token = data.get("idToken")
                 if token:
-                    log.info("idToken opgehaald ✓")
                     return token
-                # Log wat er wel in zit
-                log.error(f"Geen idToken. Keys in response: {list(data.keys())}, expires: {data.get('expires')}")
-                raise ValueError("Sessie verlopen — log opnieuw in op irp.nxtport.com en plak nieuwe cookie.")
+                raise ValueError("Sessie verlopen — log opnieuw in op irp.nxtport.com.")
             raise ValueError(f"Session HTTP {resp.status_code} — cookie verlopen?")
         except ValueError:
             raise
@@ -99,11 +73,11 @@ class IRPClient:
 
     def _headers(self) -> dict:
         return {
-            "Authorization": f"Bearer {self._get_token()}",
-            "Content-Type" : "application/json",
-            "Accept"       : "application/json",
-            "Active-Role"  : "LSP",
-            "User-Agent"   : "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/116.0.0.0",
+            "Authorization" : f"Bearer {self._get_token()}",
+            "Content-Type"  : "application/json",
+            "Accept"        : "application/json",
+            "Active-Role"   : "LSP",
+            "User-Agent"    : "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/116.0.0.0",
         }
 
     def _call(self, method: str, url: str, **kwargs):
@@ -115,7 +89,6 @@ class IRPClient:
         )
         log.info(f"{method} {url} → HTTP {resp.status_code}")
         if resp.status_code == 401:
-            st.session_state.pop("irp_id_token", None)
             st.session_state.pop("irp_cookies", None)
             raise ValueError("Sessie verlopen — opnieuw inloggen.")
         return resp
@@ -124,14 +97,13 @@ class IRPClient:
         """Zoek CRN via BL + containernummer + EORI."""
         try:
             params = {
-                "bl"  : bl,
-                "teId": container or "",
-                "eori": eori or "",
-                "sn"  : "",
+                "bl"   : bl,
+                "teId" : container or "",
+                "eori" : eori or "",
+                "sn"   : "",
             }
             log.info(f"CRN zoeken: {params}")
             resp = self._call("GET", f"{TSD_BASE}/reference", params=params)
-            log.info(f"CRN response: {resp.text[:200]}")
             if resp.status_code == 200:
                 data = resp.json()
                 if isinstance(data, str):
@@ -150,41 +122,39 @@ class IRPClient:
             return None
 
     def get_tsd_information(self, crn: str) -> TSDResult | None:
-        """Haal TSD info op via CRN — bevat MRN zodra container gelost."""
+        """Haal TSD info + write-off data op via CRN."""
         try:
             resp = self._call("GET", f"{TSD_BASE}/{crn}")
-            log.info(f"TSD response: {resp.text[:200]}")
             if resp.status_code == 200:
                 data = resp.json()
                 mrn  = data.get("mrn") or None
                 if mrn == "":
                     mrn = None
 
-                # Haal write-off data op (collis + gewicht)
+                # Write-off data ophalen (collis + gewicht)
                 packages_released   = None
                 gross_mass_released = None
                 try:
                     wo_resp = self._call("GET", f"{TSD_BASE}/{crn}/write-off")
-                    log.info(f"Write-off HTTP {wo_resp.status_code}: {wo_resp.text[:300]}")
                     if wo_resp.status_code == 200:
                         wo   = wo_resp.json()
                         pkg  = wo.get("writtenOfPackages") or {}
                         mass = wo.get("writtenOffGrossMass") or {}
                         packages_released   = pkg.get("totalIncluded")
                         gross_mass_released = mass.get("totalIncluded")
-                        log.info(f"Write-off: collis={packages_released}, massa={gross_mass_released}")
+                        log.info(f"Write-off {crn}: collis={packages_released}, massa={gross_mass_released}")
                 except Exception as wo_err:
-                    log.warning(f"Write-off ophalen mislukt voor {crn}: {wo_err}")
+                    log.warning(f"Write-off mislukt voor {crn}: {wo_err}")
 
                 return TSDResult(
-                    crn                  = data.get("crn", crn),
-                    mrn                  = mrn,
-                    bl                   = data.get("bl", ""),
-                    eori                 = data.get("saEORI", ""),
-                    status_tsd           = data.get("status", {}).get("tsd", ""),
-                    status_clearance     = data.get("status", {}).get("clearance", ""),
-                    packages_released    = packages_released,
-                    gross_mass_released  = gross_mass_released,
+                    crn                 = data.get("crn", crn),
+                    mrn                 = mrn,
+                    bl                  = data.get("bl", ""),
+                    eori                = data.get("saEORI", ""),
+                    status_tsd          = data.get("status", {}).get("tsd", ""),
+                    status_clearance    = data.get("status", {}).get("clearance", ""),
+                    packages_released   = packages_released,
+                    gross_mass_released = gross_mass_released,
                 )
             elif resp.status_code == 404:
                 log.warning(f"CRN {crn} niet gevonden")
