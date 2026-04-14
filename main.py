@@ -299,6 +299,7 @@ def run_poll(irp: IRPClient):
 
             if tsd and tsd.mrn:
                 update_row_mrn(ws, row["row_index"], tsd.mrn, tsd.status_tsd)
+                update_row_packages(ws, row["row_index"], tsd.packages_released, tsd.gross_mass_released)
                 stats["mrn_found"] += 1
                 _send_mrn_email(ws, row, container, crn, tsd.mrn, tsd.status_tsd)
                 results.append({
@@ -339,6 +340,7 @@ def run_poll(irp: IRPClient):
 
         if tsd.mrn:
             update_row_mrn(ws, row["row_index"], tsd.mrn, tsd.status_tsd)
+            update_row_packages(ws, row["row_index"], tsd.packages_released, tsd.gross_mass_released)
             stats["mrn_found"] += 1
             _send_mrn_email(ws, row, container, crn, tsd.mrn, tsd.status_tsd)
             results.append({
@@ -352,6 +354,7 @@ def run_poll(irp: IRPClient):
             })
         else:
             update_row_poll(ws, row["row_index"], tsd.status_tsd)
+            update_row_packages(ws, row["row_index"], tsd.packages_released, tsd.gross_mass_released)
             stats["no_mrn_yet"] += 1
             results.append({
                 "DossierId": row["dossier_id"],
