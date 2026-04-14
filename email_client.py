@@ -16,7 +16,7 @@ SMTP_PORT     = 587
 SMTP_USER     = "dkmcustoms@gmail.com"
 SMTP_PASSWORD = "vhamzgxprgvgktve"
 SMTP_FROM     = "dkmcustoms@gmail.com"
-TO_EMAIL      = "luc.dekerf@dkm-customs.com"
+TO_EMAILS     = ["luc.dekerf@dkm-customs.com", "bjorn.vanacker@dkm-customs.com", "import@dkm-customs.com"]
 
 
 def send_mrn_notification(
@@ -100,16 +100,16 @@ def send_mrn_notification(
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
         msg["From"]    = SMTP_FROM
-        msg["To"]      = TO_EMAIL
+        msg["To"]      = ", ".join(TO_EMAILS)
         msg.attach(MIMEText(html, "html"))
 
         with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
             server.ehlo()
             server.starttls()
             server.login(SMTP_USER, SMTP_PASSWORD)
-            server.sendmail(SMTP_FROM, TO_EMAIL, msg.as_string())
+            server.sendmail(SMTP_FROM, TO_EMAILS, msg.as_string())
 
-        log.info(f"MRN notificatie verstuurd voor {container} (MRN: {mrn})")
+        log.info(f"MRN notificatie verstuurd voor {container} (MRN: {mrn}) naar {TO_EMAILS}")
         return True
 
     except Exception as e:
