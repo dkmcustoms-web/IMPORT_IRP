@@ -167,12 +167,11 @@ class IRPClient:
                     wo_resp = self._call("GET", f"{TSD_BASE}/{crn}/write-off")
                     log.info(f"Write-off HTTP {wo_resp.status_code}: {wo_resp.text[:300]}")
                     if wo_resp.status_code == 200:
-                        wo = wo_resp.json()
-                        # Zoek "numberOfPackages" en "totalGrossMass" met "releasedByCustoms"
-                        pkg  = wo.get("numberOfPackages") or {}
-                        mass = wo.get("totalGrossMass") or {}
-                        packages_released   = pkg.get("releasedByCustoms")
-                        gross_mass_released = mass.get("releasedByCustoms")
+                        wo   = wo_resp.json()
+                        pkg  = wo.get("writtenOfPackages") or {}
+                        mass = wo.get("writtenOffGrossMass") or {}
+                        packages_released   = pkg.get("totalIncluded")
+                        gross_mass_released = mass.get("totalIncluded")
                         log.info(f"Write-off: collis={packages_released}, massa={gross_mass_released}")
                 except Exception as wo_err:
                     log.warning(f"Write-off ophalen mislukt voor {crn}: {wo_err}")
