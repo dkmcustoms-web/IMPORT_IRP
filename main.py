@@ -206,11 +206,29 @@ def _save_and_login(cookie_str: str):
 
 
 # ── Polling logica ────────────────────────────────────────────────────────────
-def run_poll(irp: IRPClient):
+def run_poll(irp: IRPClient, stale_only: bool = False):
     ss   = get_client()
     ws   = ss.worksheet("Blad1")
     ensure_headers(ws)
     rows = get_all_rows(ws)
+
+    if stale_only:
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        def is_stale(row):
+            # Altijd pollen als nog geen CRN of geen last_poll
+            if not row["crn"] or not row["last_poll"]:
+                return True
+            # Sla over als MRN al gevonden
+            if row["mrn_found"]:
+                return False
+            try:
+                last = datetime.strptime(row["last_poll"], "%d/%m/%Y %H:%M")
+                last = last.replace(tzinfo=timezone.utc)
+                return (now - last).total_seconds() > 7200  # 2 uur
+            except Exception:
+                return True
+        rows = [r for r in rows if is_stale(r)]
 
     stats   = {"skipped": 0, "crn_found": 0, "mrn_found": 0, "no_mrn_yet": 0, "errors": 0}
     results = []
@@ -440,8 +458,13 @@ def show_dashboard():
             st.warning(f"🟡 Verbinding onbekend: {e}")
 
         st.markdown("---")
-        if st.button("🔄 Nu ophalen", use_container_width=True, type="primary"):
+        if st.button("🔄 Alles ophalen", use_container_width=True, type="primary"):
             st.session_state["run_poll"] = True
+            st.session_state["poll_mode"] = "all"
+            st.session_state["page"] = "dashboard"
+        if st.button("⏱️ Alleen verouderd (>2u)", use_container_width=True):
+            st.session_state["run_poll"] = True
+            st.session_state["poll_mode"] = "stale"
             st.session_state["page"] = "dashboard"
         if st.button("➕ Nieuw dossier", use_container_width=True):
             st.session_state["page"] = "nieuw"
@@ -488,8 +511,11 @@ def show_dashboard():
     if st.session_state.get("run_poll"):
         st.session_state.pop("run_poll", None)
         try:
-            with st.spinner("Bezig met ophalen..."):
-                stats, results = run_poll(irp)
+            poll_mode = st.session_state.pop("poll_mode", "all")
+            stale = poll_mode == "stale"
+            label = "verouderde dossiers (>2u)" if stale else "alle dossiers"
+            with st.spinner(f"Bezig met ophalen ({label})..."):
+                stats, results = run_poll(irp, stale_only=stale)
 
             # Statistieken in sidebar
             with sidebar_stats:
