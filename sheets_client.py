@@ -49,18 +49,13 @@ def now_str() -> str:
 def ensure_headers(ws: gspread.Worksheet):
     """Voeg ontbrekende kolommen toe."""
     headers = ws.row_values(1)
-    if len(headers) < 7 or headers[6].strip() == "":
-        ws.update_cell(1, 7, "CRN")
-        log.info("Header toegevoegd: G1 = CRN")
-    if len(headers) < 8 or headers[7].strip() == "":
-        ws.update_cell(1, 8, "STATUS_TSD")
-        log.info("Header toegevoegd: H1 = STATUS_TSD")
-    if len(headers) < 9 or headers[8].strip() == "":
-        ws.update_cell(1, 9, "STATUS_TSD")
-        log.info("Header toegevoegd: I1 = STATUS_TSD")
-    if len(headers) < 10 or headers[9].strip() == "":
-        ws.update_cell(1, 10, "EMAIL_SENT")
-        log.info("Header toegevoegd: J1 = EMAIL_SENT")
+    expected = ["DossierId", "Container", "BL", "EORI", "ETA",
+                "LAST_POLL", "MRN_FOUND", "CRN", "STATUS_TSD", "EMAIL_SENT"]
+    for i, name in enumerate(expected):
+        col = i + 1
+        if len(headers) < col or headers[i].strip() == "":
+            ws.update_cell(1, col, name)
+            log.info(f"Header toegevoegd: kolom {col} = {name}")
 
 
 def get_all_rows(ws: gspread.Worksheet) -> list[dict]:
@@ -88,16 +83,16 @@ def get_all_rows(ws: gspread.Worksheet) -> list[dict]:
 
 
 def update_row_crn(ws: gspread.Worksheet, row_index: int, crn: str, status_tsd: str):
-    ws.update_cell(row_index, 7, crn)
-    ws.update_cell(row_index, 8, status_tsd)
-    ws.update_cell(row_index, 5, now_str())
+    ws.update_cell(row_index, COL["CRN"], crn)
+    ws.update_cell(row_index, COL["STATUS_TSD"], status_tsd)
+    ws.update_cell(row_index, COL["LAST_POLL"], now_str())
     log.info(f"Rij {row_index}: CRN={crn}, Status={status_tsd}")
 
 
 def update_row_mrn(ws: gspread.Worksheet, row_index: int, mrn: str, status_tsd: str):
-    ws.update_cell(row_index, 6, mrn)
-    ws.update_cell(row_index, 8, status_tsd)
-    ws.update_cell(row_index, 5, now_str())
+    ws.update_cell(row_index, COL["MRN_FOUND"], mrn)
+    ws.update_cell(row_index, COL["STATUS_TSD"], status_tsd)
+    ws.update_cell(row_index, COL["LAST_POLL"], now_str())
     ws.format(f"F{row_index}", {
         "backgroundColor": {"red": 0.72, "green": 0.96, "blue": 0.72},
         "textFormat": {"bold": True},
@@ -106,8 +101,8 @@ def update_row_mrn(ws: gspread.Worksheet, row_index: int, mrn: str, status_tsd: 
 
 
 def update_row_poll(ws: gspread.Worksheet, row_index: int, status_tsd: str):
-    ws.update_cell(row_index, 5, now_str())
-    ws.update_cell(row_index, 8, status_tsd)
+    ws.update_cell(row_index, COL["LAST_POLL"], now_str())
+    ws.update_cell(row_index, COL["STATUS_TSD"], status_tsd)
 
 
 def save_cookie(cookie_str: str):
@@ -161,7 +156,7 @@ def mark_email_sent(ws: gspread.Worksheet, row_index: int):
 def add_dossier(ws: gspread.Worksheet, dossier_id: str, container: str, bl: str, eori: str, eta: str = "") -> int:
     """Voeg een nieuw dossier toe aan de Google Sheet. Geeft het rijnummer terug."""
     from datetime import datetime, timezone
-    new_row = [dossier_id, container, bl, eori, "", "", "", "", "", eta]
+    new_row = [dossier_id, container, bl, eori, eta, "", "", "", "", ""]
     ws.append_row(new_row, value_input_option="USER_ENTERED")
     all_values = ws.get_all_values()
     row_index = len(all_values)
