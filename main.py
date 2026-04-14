@@ -234,6 +234,8 @@ def run_poll(irp: IRPClient):
                 "Status"   : eta_status,
                 "MRN"      : "",
                 "TSD"      : row["status_tsd"],
+                "Collis"   : "",
+                "Massa(kg)": "",
                 "Datum/Uur": row["last_poll"],
                 "ETA"      : row.get("eta", ""),
             })
@@ -254,7 +256,9 @@ def run_poll(irp: IRPClient):
                 "Status"   : "✅ MRN Gevonden",
                 "MRN"      : mrn,
                 "TSD"      : row["status_tsd"],
-                "Datum/Uur": row["last_poll"],  # datum NIET overschrijven
+                "Collis"   : row.get("collis", ""),
+                "Massa(kg)": row.get("gross_mass", ""),
+                "Datum/Uur": row["last_poll"],
             })
             continue
 
@@ -274,6 +278,8 @@ def run_poll(irp: IRPClient):
                     "Status"   : f"⚠️ Parameters onvolledig ({', '.join(missing)})",
                     "MRN"      : "",
                     "TSD"      : "",
+                    "Collis"   : "",
+                    "Massa(kg)": "",
                     "Datum/Uur": now_str(),
                 })
                 continue
@@ -288,6 +294,8 @@ def run_poll(irp: IRPClient):
                     "Status"   : "❓ Geen CRN in NxtPort",
                     "MRN"      : "",
                     "TSD"      : "",
+                    "Collis"   : "",
+                    "Massa(kg)": "",
                     "Datum/Uur": now_str(),
                 })
                 continue
@@ -309,6 +317,8 @@ def run_poll(irp: IRPClient):
                     "Status"   : "✅ MRN Gevonden",
                     "MRN"      : tsd.mrn,
                     "TSD"      : tsd.status_tsd,
+                    "Collis"   : "",
+                    "Massa(kg)": "",
                     "Datum/Uur": now_str(),
                 })
             else:
@@ -319,6 +329,8 @@ def run_poll(irp: IRPClient):
                     "Status"   : "🟡 Wachten",
                     "MRN"      : "",
                     "TSD"      : status,
+                    "Collis"   : "",
+                    "Massa(kg)": "",
                     "Datum/Uur": now_str(),
                 })
                 stats["no_mrn_yet"] += 1
@@ -336,6 +348,8 @@ def run_poll(irp: IRPClient):
                 "Status"   : "❌ API fout",
                 "MRN"      : "",
                 "TSD"      : "",
+                "Collis"   : "",
+                "Massa(kg)": "",
                 "Datum/Uur": now_str(),
             })
             continue
@@ -352,6 +366,8 @@ def run_poll(irp: IRPClient):
                 "Status"   : "✅ MRN Gevonden",
                 "MRN"      : tsd.mrn,
                 "TSD"      : tsd.status_tsd,
+                "Collis"   : "",
+                "Massa(kg)": "",
                 "Datum/Uur": now_str(),
             })
         else:
@@ -365,6 +381,8 @@ def run_poll(irp: IRPClient):
                 "Status"   : "🟡 Wachten",
                 "MRN"      : "",
                 "TSD"      : tsd.status_tsd,
+                "Collis"   : "",
+                "Massa(kg)": "",
                 "Datum/Uur": now_str(),
             })
 
@@ -500,6 +518,8 @@ def show_dashboard():
                     "Status"   : _status(r),
                     "MRN"      : r["mrn_found"],
                     "TSD"      : r["status_tsd"],
+                    "Collis"   : r.get("collis", ""),
+                    "Massa(kg)": r.get("gross_mass", ""),
                     "Datum/Uur": r["last_poll"],
                     "ETA"      : r.get("eta", ""),
                 } for r in rows]
@@ -536,15 +556,20 @@ def _show_results(results: list):
     if not results:
         return
 
+    from datetime import date
+    vandaag     = date.today().strftime("%d/%m/%Y")
+
     actief      = [r for r in results if "Wachten" in r["Status"] or "Nieuw" in r["Status"]]
     klaar       = [r for r in results if "MRN Gevonden" in r["Status"]]
+    klaar_oud   = [r for r in klaar if r.get("Datum/Uur", "")[:10] < vandaag]
     geen_crn    = [r for r in results if "Geen CRN" in r["Status"]]
     onvolledig  = [r for r in results if "onvolledig" in r["Status"]]
     eta_wacht   = [r for r in results if "📅 ETA" in r["Status"]]
 
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
         f"🟡 Actief ({len(actief)})",
         f"✅ MRN Gevonden ({len(klaar)})",
+        f"📦 MRN Ouder dan vandaag ({len(klaar_oud)})",
         f"📅 ETA — nog niet aan bod ({len(eta_wacht)})",
         f"❓ Geen CRN in NxtPort ({len(geen_crn)})",
         f"⚠️ Onvolledige parameters ({len(onvolledig)})",
@@ -564,27 +589,34 @@ def _show_results(results: list):
             st.info("Nog geen MRN gevonden.")
 
     with tab3:
+        if klaar_oud:
+            st.info("MRN's gevonden vóór vandaag — deze dossiers zijn afgehandeld.")
+            st.dataframe(klaar_oud, use_container_width=True, hide_index=True, height=400)
+        else:
+            st.success("Geen afgehandelde dossiers van vorige dagen.")
+
+    with tab4:
         if eta_wacht:
-            st.info("Deze containers worden nog niet gepolled — hun ETA is meer dan 7 dagen in de toekomst. Polling start automatisch wanneer de ETA binnen 7 dagen valt.")
+            st.info("Deze containers worden nog niet gepolled — hun ETA is meer dan 7 dagen in de toekomst.")
             st.dataframe(eta_wacht, use_container_width=True, hide_index=True, height=350)
         else:
             st.success("Geen containers in ETA-wachtstatus.")
 
-    with tab4:
+    with tab5:
         if geen_crn:
             st.info("Deze containers zijn correct ingegeven maar hebben nog geen CRN in NxtPort. Ze worden bij elke poll opnieuw gecontroleerd.")
             st.dataframe(geen_crn, use_container_width=True, hide_index=True, height=350)
         else:
             st.success("Alle dossiers met volledige parameters hebben een CRN.")
 
-    with tab5:
+    with tab6:
         if onvolledig:
             st.warning("Vul de ontbrekende parameters aan in de Google Sheet zodat de opzoeking in NxtPort kan gebeuren.")
             st.dataframe(onvolledig, use_container_width=True, hide_index=True, height=350)
         else:
             st.success("Alle dossiers hebben volledige parameters.")
 
-    with tab6:
+    with tab7:
         st.dataframe(results, use_container_width=True, hide_index=True, height=500)
 
 
