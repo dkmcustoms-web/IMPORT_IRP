@@ -121,8 +121,10 @@ class IRPClient:
             log.error(f"Exception get_crn_from_bl: {e}")
             return None
 
-    def get_tsd_information(self, crn: str) -> TSDResult | None:
-        """Haal TSD info + write-off data op via CRN."""
+    def get_tsd_information(self, crn: str, skip_writeoff: bool = False) -> TSDResult | None:
+        """Haal TSD info + write-off data op via CRN.
+        skip_writeoff=True als collis al gekend is — bespaart een API call.
+        """
         try:
             resp = self._call("GET", f"{TSD_BASE}/{crn}")
             if resp.status_code == 200:
@@ -131,20 +133,23 @@ class IRPClient:
                 if mrn == "":
                     mrn = None
 
-                # Write-off data ophalen (collis + gewicht)
+                # Write-off data ophalen (collis + gewicht) — enkel als nog niet gekend
                 packages_released   = None
                 gross_mass_released = None
-                try:
-                    wo_resp = self._call("GET", f"{TSD_BASE}/{crn}/write-off")
-                    if wo_resp.status_code == 200:
-                        wo   = wo_resp.json()
-                        pkg  = wo.get("writtenOfPackages") or {}
-                        mass = wo.get("writtenOffGrossMass") or {}
-                        packages_released   = pkg.get("totalIncluded")
-                        gross_mass_released = mass.get("totalIncluded")
-                        log.info(f"Write-off {crn}: collis={packages_released}, massa={gross_mass_released}")
-                except Exception as wo_err:
-                    log.warning(f"Write-off mislukt voor {crn}: {wo_err}")
+                if not skip_writeoff:
+                    try:
+                        wo_resp = self._call("GET", f"{TSD_BASE}/{crn}/write-off")
+                        if wo_resp.status_code == 200:
+                            wo   = wo_resp.json()
+                            pkg  = wo.get("writtenOfPackages") or {}
+                            mass = wo.get("writtenOffGrossMass") or {}
+                            packages_released   = pkg.get("totalIncluded")
+                            gross_mass_released = mass.get("totalIncluded")
+                            log.info(f"Write-off {crn}: collis={packages_released}, massa={gross_mass_released}")
+                    except Exception as wo_err:
+                        log.warning(f"Write-off mislukt voor {crn}: {wo_err}")
+                else:
+                    log.info(f"Write-off {crn}: overgeslagen (al gekend)")
 
                 return TSDResult(
                     crn                 = data.get("crn", crn),

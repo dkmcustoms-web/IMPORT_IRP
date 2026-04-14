@@ -292,7 +292,7 @@ def run_poll(irp: IRPClient):
                 })
                 continue
             crn    = crn_result
-            tsd    = irp.get_tsd_information(crn)
+            tsd    = irp.get_tsd_information(crn)  # Altijd write-off ophalen voor nieuwe CRN
             status = tsd.status_tsd if tsd else ""
             update_row_crn(ws, row["row_index"], crn, status)
             stats["crn_found"] += 1
@@ -324,7 +324,9 @@ def run_poll(irp: IRPClient):
                 stats["no_mrn_yet"] += 1
             continue
 
-        tsd = irp.get_tsd_information(crn)
+        # Skip write-off als collis al ingevuld in sheet
+        collis_known = bool(row.get("collis") and row["collis"].strip())
+        tsd = irp.get_tsd_information(crn, skip_writeoff=collis_known)
         if not tsd:
             stats["errors"] += 1
             results.append({
