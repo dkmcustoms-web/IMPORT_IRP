@@ -12,11 +12,7 @@ from google.oauth2.service_account import Credentials
 
 log = logging.getLogger(__name__)
 
-SHEET_NAME = "Blad1"
-
-SCOPES = [
-    "https://www.googleapis.com/auth/spreadsheets",
-]
+SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
 COL = {
     "DOSSIER_ID" : 1,
@@ -29,9 +25,13 @@ COL = {
     "CRN"        : 8,
     "STATUS_TSD" : 9,
     "EMAIL_SENT" : 10,
-    "COLLIS"     : 11,  # Number of packages released by customs
-    "GROSS_MASS" : 12,  # Total gross mass released by customs (kg)
+    "COLLIS"     : 11,
+    "GROSS_MASS" : 12,
 }
+
+
+def now_str() -> str:
+    return datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M")
 
 
 def get_client() -> gspread.Spreadsheet:
@@ -44,16 +44,14 @@ def get_client() -> gspread.Spreadsheet:
     return gc.open_by_key(spreadsheet_id)
 
 
-def now_str() -> str:
-    return datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M")
-
-
 def ensure_headers(ws: gspread.Worksheet):
-    """Voeg ontbrekende kolommen toe."""
+    """Voeg ontbrekende kolomheaders toe."""
     headers = ws.row_values(1)
-    expected = ["DossierId", "Container", "BL", "EORI", "ETA",
-                "LAST_POLL", "MRN_FOUND", "CRN", "STATUS_TSD", "EMAIL_SENT",
-                "COLLIS", "GROSS_MASS_KG"]
+    expected = [
+        "DossierId", "Container", "BL", "EORI", "ETA",
+        "LAST_POLL", "MRN_FOUND", "CRN", "STATUS_TSD", "EMAIL_SENT",
+        "COLLIS", "GROSS_MASS_KG",
+    ]
     for i, name in enumerate(expected):
         col = i + 1
         if len(headers) < col or headers[i].strip() == "":
@@ -62,11 +60,12 @@ def ensure_headers(ws: gspread.Worksheet):
 
 
 def get_all_rows(ws: gspread.Worksheet) -> list[dict]:
-    records = ws.get_all_values()
+    """Lees alle dossiers uit Blad1 (rij 2 en verder)."""
+    all_values = ws.get_all_values()
     rows = []
-    for i, row in enumerate(records[1:], start=2):
-        while len(row) < 8:
-            row.append("")
+    for i, row in enumerate(all_values[1:], start=2):
+        if not row or not row[0].strip():
+            continue
         while len(row) < 12:
             row.append("")
         rows.append({
@@ -75,34 +74,34 @@ def get_all_rows(ws: gspread.Worksheet) -> list[dict]:
             "container"  : row[1].strip().upper(),
             "bl"         : row[2].strip(),
             "eori"       : row[3].strip(),
-            "eta"        : row[4].strip(),   # Kolom E
-            "last_poll"  : row[5],           # Kolom F
-            "mrn_found"  : row[6],           # Kolom G
-            "crn"        : row[7].strip(),   # Kolom H
-            "status_tsd" : row[8],           # Kolom I
-            "email_sent" : row[9].strip(),   # Kolom J
-            "collis"     : row[10].strip(),  # Kolom K
-            "gross_mass" : row[11].strip(),  # Kolom L
+            "eta"        : row[4].strip(),
+            "last_poll"  : row[5],
+            "mrn_found"  : row[6],
+            "crn"        : row[7].strip(),
+            "status_tsd" : row[8],
+            "email_sent" : row[9].strip(),
+            "collis"     : row[10].strip(),
+            "gross_mass" : row[11].strip(),
         })
-    return [r for r in rows if r["container"]]
+    return rows
 
 
 def update_row_crn(ws: gspread.Worksheet, row_index: int, crn: str, status_tsd: str):
     ws.update_cell(row_index, COL["CRN"], crn)
     ws.update_cell(row_index, COL["STATUS_TSD"], status_tsd)
     ws.update_cell(row_index, COL["LAST_POLL"], now_str())
-    log.info(f"Rij {row_index}: CRN={crn}, Status={status_tsd}")
+    log.info(f"Rij {row_index}: CRN={crn}")
 
 
 def update_row_mrn(ws: gspread.Worksheet, row_index: int, mrn: str, status_tsd: str):
     ws.update_cell(row_index, COL["MRN_FOUND"], mrn)
     ws.update_cell(row_index, COL["STATUS_TSD"], status_tsd)
     ws.update_cell(row_index, COL["LAST_POLL"], now_str())
-    ws.format(f"F{row_index}", {
+    ws.format(f"G{row_index}", {
         "backgroundColor": {"red": 0.72, "green": 0.96, "blue": 0.72},
         "textFormat": {"bold": True},
     })
-    log.info(f"Rij {row_index}: MRN={mrn} gevonden!")
+    log.info(f"Rij {row_index}: MRN={mrn}")
 
 
 def update_row_poll(ws: gspread.Worksheet, row_index: int, status_tsd: str):
@@ -110,8 +109,35 @@ def update_row_poll(ws: gspread.Worksheet, row_index: int, status_tsd: str):
     ws.update_cell(row_index, COL["STATUS_TSD"], status_tsd)
 
 
+def update_row_packages(ws: gspread.Worksheet, row_index: int,
+                        packages: int | None,
+                        gross_mass: float | None):
+    """Sla collis en gewicht op."""
+    if packages is not None:
+        ws.update_cell(row_index, COL["COLLIS"], packages)
+    if gross_mass is not None:
+        ws.update_cell(row_index, COL["GROSS_MASS"], gross_mass)
+    log.info(f"Rij {row_index}: collis={packages}, massa={gross_mass}")
+
+
+def mark_email_sent(ws: gspread.Worksheet, row_index: int):
+    ws.update_cell(row_index, COL["EMAIL_SENT"], "✓")
+    log.info(f"Email gestuurd gemarkeerd voor rij {row_index}")
+
+
+def add_dossier(ws: gspread.Worksheet, dossier_id: str, container: str,
+                bl: str, eori: str, eta: str = "") -> int:
+    """Voeg een nieuw dossier toe. Geeft rijnummer terug."""
+    new_row = [dossier_id, container, bl, eori, eta, "", "", "", "", "", "", ""]
+    ws.append_row(new_row, value_input_option="USER_ENTERED")
+    all_values = ws.get_all_values()
+    row_index = len(all_values)
+    log.info(f"Nieuw dossier: {dossier_id} / {container} op rij {row_index}")
+    return row_index
+
+
 def save_cookie(cookie_str: str):
-    """Sla de cookie op in een apart tabblad 'Config'."""
+    """Sla cookie op in Config tabblad (gesplitst in 2 cellen)."""
     ss = get_client()
     try:
         ws = ss.worksheet("Config")
@@ -119,62 +145,31 @@ def save_cookie(cookie_str: str):
         ws = ss.add_worksheet(title="Config", rows=10, cols=3)
         ws.update_cell(1, 1, "KEY")
         ws.update_cell(1, 2, "VALUE")
-    # Cookie is te lang voor 1 cel — splits in 2 stukken
-    half = len(cookie_str) // 2
+    half  = len(cookie_str) // 2
     part1 = cookie_str[:half]
     part2 = cookie_str[half:]
     ws.update_cell(2, 1, "irp_cookie_1")
     ws.update_cell(2, 2, part1)
     ws.update_cell(3, 1, "irp_cookie_2")
     ws.update_cell(3, 2, part2)
-    log.info(f"Cookie opgeslagen in Config tab ({len(cookie_str)} tekens, 2 delen)")
+    log.info(f"Cookie opgeslagen ({len(cookie_str)} tekens)")
 
 
 def load_cookie() -> str | None:
-    """Lees de cookie uit het 'Config' tabblad."""
+    """Laad cookie uit Config tabblad."""
     try:
         ss = get_client()
         ws = ss.worksheet("Config")
         records = ws.get_all_values()
         data = {row[0]: row[1] for row in records[1:] if len(row) >= 2}
-        # Probeer gesplitste cookie
         if "irp_cookie_1" in data and "irp_cookie_2" in data:
             cookie = data["irp_cookie_1"] + data["irp_cookie_2"]
-            if cookie.strip():
-                log.info(f"Cookie geladen uit Config tab ({len(cookie)} tekens)")
+            if len(cookie) > 50:
+                log.info(f"Cookie geladen ({len(cookie)} tekens)")
                 return cookie
-        # Fallback: oude enkelvoudige cookie
-        if "irp_cookie" in data and data["irp_cookie"].strip():
+        if "irp_cookie" in data and len(data["irp_cookie"]) > 50:
             return data["irp_cookie"]
         return None
     except Exception as e:
-        log.warning(f"Geen cookie gevonden in sheet: {e}")
+        log.warning(f"Geen cookie gevonden: {e}")
         return None
-
-
-def mark_email_sent(ws: gspread.Worksheet, row_index: int):
-    """Markeer dat de e-mail verstuurd is voor dit dossier."""
-    ws.update_cell(row_index, COL["EMAIL_SENT"], "✓")
-    log.info(f"Email gestuurd gemarkeerd voor rij {row_index}")
-
-
-def add_dossier(ws: gspread.Worksheet, dossier_id: str, container: str, bl: str, eori: str, eta: str = "") -> int:
-    """Voeg een nieuw dossier toe aan de Google Sheet. Geeft het rijnummer terug."""
-    from datetime import datetime, timezone
-    new_row = [dossier_id, container, bl, eori, eta, "", "", "", "", ""]
-    ws.append_row(new_row, value_input_option="USER_ENTERED")
-    all_values = ws.get_all_values()
-    row_index = len(all_values)
-    log.info(f"Nieuw dossier toegevoegd: {dossier_id} / {container} op rij {row_index}")
-    return row_index
-
-
-def update_row_packages(ws: gspread.Worksheet, row_index: int,
-                        packages_released: int | None,
-                        gross_mass_released: float | None):
-    """Sla collis en gewicht op in de sheet."""
-    if packages_released is not None:
-        ws.update_cell(row_index, COL["COLLIS"], packages_released)
-    if gross_mass_released is not None:
-        ws.update_cell(row_index, COL["GROSS_MASS"], gross_mass_released)
-    log.info(f"Rij {row_index}: collis={packages_released}, massa={gross_mass_released}")
