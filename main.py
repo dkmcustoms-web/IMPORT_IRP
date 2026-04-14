@@ -207,28 +207,29 @@ def _save_and_login(cookie_str: str):
 
 # ── Polling logica ────────────────────────────────────────────────────────────
 def run_poll(irp: IRPClient, stale_only: bool = False):
-    ss   = get_client()
-    ws   = ss.worksheet("Blad1")
+    ss       = get_client()
+    ws       = ss.worksheet("Blad1")
     ensure_headers(ws)
-    rows = get_all_rows(ws)
+    all_rows = get_all_rows(ws)
 
     if stale_only:
         from datetime import datetime, timezone
         now = datetime.now(timezone.utc)
         def is_stale(row):
-            # Altijd pollen als nog geen CRN of geen last_poll
             if not row["crn"] or not row["last_poll"]:
                 return True
-            # Sla over als MRN al gevonden
             if row["mrn_found"]:
                 return False
             try:
                 last = datetime.strptime(row["last_poll"], "%d/%m/%Y %H:%M")
                 last = last.replace(tzinfo=timezone.utc)
-                return (now - last).total_seconds() > 7200  # 2 uur
+                return (now - last).total_seconds() > 7200
             except Exception:
                 return True
-        rows = [r for r in rows if is_stale(r)]
+        rows = [r for r in all_rows if is_stale(r)]
+        log.info(f"Stale-only mode: {len(rows)}/{len(all_rows)} dossiers te pollen")
+    else:
+        rows = all_rows
 
     stats   = {"skipped": 0, "crn_found": 0, "mrn_found": 0, "no_mrn_yet": 0, "errors": 0}
     results = []
@@ -406,6 +407,47 @@ def run_poll(irp: IRPClient, stale_only: bool = False):
             })
 
     progress.empty()
+
+    # Herlaad alle rows voor volledige display (ook niet-gepollde)
+    if stale_only:
+        all_rows_fresh = get_all_rows(ws)
+        # Merge: vervang gepollde rows door verse versie, voeg niet-gepollde toe
+        polled_containers = {r["container"] for r in rows}
+        fresh_results = []
+        for r in all_rows_fresh:
+            if r["container"] in polled_containers:
+                # Gebruik het resultaat van de poll
+                for res in results:
+                    if res["Container"] == r["container"]:
+                        fresh_results.append(res)
+                        break
+            else:
+                # Niet gepolled - toon vanuit sheet
+                from datetime import date
+                def _st(row):
+                    if row["mrn_found"]: return "✅ MRN Gevonden"
+                    poll_ok, eta_st = should_poll(row)
+                    if not poll_ok: return eta_st
+                    if row["crn"]: return "🟡 Wachten"
+                    if not row["bl"] or not row["eori"]: return "⚠️ Parameters onvolledig"
+                    if row["last_poll"]: return "❓ Geen CRN in NxtPort"
+                    return "⏳ Nieuw"
+                fresh_results.append({
+                    "DossierId": r["dossier_id"],
+                    "Container": r["container"],
+                    "BL"       : r["bl"],
+                    "EORI"     : r["eori"],
+                    "CRN"      : r["crn"],
+                    "Status"   : _st(r),
+                    "MRN"      : r["mrn_found"],
+                    "TSD"      : r["status_tsd"],
+                    "Collis"   : r.get("collis", ""),
+                    "Massa(kg)": r.get("gross_mass", ""),
+                    "Datum/Uur": r["last_poll"],
+                    "ETA"      : r.get("eta", ""),
+                })
+        return stats, fresh_results
+
     return stats, results
 
 
