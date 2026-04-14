@@ -23,12 +23,12 @@ COL = {
     "CONTAINER"  : 2,
     "BL"         : 3,
     "EORI"       : 4,
-    "LAST_POLL"  : 5,
-    "MRN_FOUND"  : 6,
-    "CRN"        : 7,
-    "STATUS_TSD" : 8,
-    "EMAIL_SENT" : 9,
-    "ETA"        : 10,
+    "ETA"        : 5,   # Verplaatst naar kolom E (tussen EORI en LAST_POLL)
+    "LAST_POLL"  : 6,
+    "MRN_FOUND"  : 7,
+    "CRN"        : 8,
+    "STATUS_TSD" : 9,
+    "EMAIL_SENT" : 10,
 }
 
 
@@ -56,11 +56,11 @@ def ensure_headers(ws: gspread.Worksheet):
         ws.update_cell(1, 8, "STATUS_TSD")
         log.info("Header toegevoegd: H1 = STATUS_TSD")
     if len(headers) < 9 or headers[8].strip() == "":
-        ws.update_cell(1, 9, "EMAIL_SENT")
-        log.info("Header toegevoegd: I1 = EMAIL_SENT")
+        ws.update_cell(1, 9, "STATUS_TSD")
+        log.info("Header toegevoegd: I1 = STATUS_TSD")
     if len(headers) < 10 or headers[9].strip() == "":
-        ws.update_cell(1, 10, "ETA")
-        log.info("Header toegevoegd: J1 = ETA")
+        ws.update_cell(1, 10, "EMAIL_SENT")
+        log.info("Header toegevoegd: J1 = EMAIL_SENT")
 
 
 def get_all_rows(ws: gspread.Worksheet) -> list[dict]:
@@ -77,12 +77,12 @@ def get_all_rows(ws: gspread.Worksheet) -> list[dict]:
             "container"  : row[1].strip().upper(),
             "bl"         : row[2].strip(),
             "eori"       : row[3].strip(),
-            "last_poll"  : row[4],
-            "mrn_found"  : row[5],
-            "crn"        : row[6].strip(),
-            "status_tsd" : row[7],
-            "email_sent" : row[8].strip(),
-            "eta"        : row[9].strip(),
+            "eta"        : row[4].strip(),   # Kolom E
+            "last_poll"  : row[5],           # Kolom F
+            "mrn_found"  : row[6],           # Kolom G
+            "crn"        : row[7].strip(),   # Kolom H
+            "status_tsd" : row[8],           # Kolom I
+            "email_sent" : row[9].strip(),   # Kolom J
         })
     return [r for r in rows if r["container"]]
 
