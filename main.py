@@ -19,6 +19,7 @@ from sheets_client import (
     load_cookie,
     mark_email_sent,
     add_dossier,
+    update_row_packages,
 )
 from email_client import send_mrn_notification
 

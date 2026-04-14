@@ -22,6 +22,8 @@ class TSDResult:
     eori: str
     status_tsd: str
     status_clearance: str
+    packages_released: int | None = None
+    gross_mass_released: float | None = None
 
 
 class IRPClient:
@@ -157,13 +159,33 @@ class IRPClient:
                 mrn  = data.get("mrn") or None
                 if mrn == "":
                     mrn = None
+
+                # Haal write-off data op (collis + gewicht)
+                packages_released   = None
+                gross_mass_released = None
+                try:
+                    wo_resp = self._call("GET", f"{TSD_BASE}/{crn}/write-off")
+                    log.info(f"Write-off HTTP {wo_resp.status_code}: {wo_resp.text[:300]}")
+                    if wo_resp.status_code == 200:
+                        wo = wo_resp.json()
+                        # Zoek "numberOfPackages" en "totalGrossMass" met "releasedByCustoms"
+                        pkg  = wo.get("numberOfPackages") or {}
+                        mass = wo.get("totalGrossMass") or {}
+                        packages_released   = pkg.get("releasedByCustoms")
+                        gross_mass_released = mass.get("releasedByCustoms")
+                        log.info(f"Write-off: collis={packages_released}, massa={gross_mass_released}")
+                except Exception as wo_err:
+                    log.warning(f"Write-off ophalen mislukt voor {crn}: {wo_err}")
+
                 return TSDResult(
-                    crn              = data.get("crn", crn),
-                    mrn              = mrn,
-                    bl               = data.get("bl", ""),
-                    eori             = data.get("saEORI", ""),
-                    status_tsd       = data.get("status", {}).get("tsd", ""),
-                    status_clearance = data.get("status", {}).get("clearance", ""),
+                    crn                  = data.get("crn", crn),
+                    mrn                  = mrn,
+                    bl                   = data.get("bl", ""),
+                    eori                 = data.get("saEORI", ""),
+                    status_tsd           = data.get("status", {}).get("tsd", ""),
+                    status_clearance     = data.get("status", {}).get("clearance", ""),
+                    packages_released    = packages_released,
+                    gross_mass_released  = gross_mass_released,
                 )
             elif resp.status_code == 404:
                 log.warning(f"CRN {crn} niet gevonden")

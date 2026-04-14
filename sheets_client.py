@@ -23,12 +23,14 @@ COL = {
     "CONTAINER"  : 2,
     "BL"         : 3,
     "EORI"       : 4,
-    "ETA"        : 5,   # Verplaatst naar kolom E (tussen EORI en LAST_POLL)
+    "ETA"        : 5,
     "LAST_POLL"  : 6,
     "MRN_FOUND"  : 7,
     "CRN"        : 8,
     "STATUS_TSD" : 9,
     "EMAIL_SENT" : 10,
+    "COLLIS"     : 11,  # Number of packages released by customs
+    "GROSS_MASS" : 12,  # Total gross mass released by customs (kg)
 }
 
 
@@ -50,7 +52,8 @@ def ensure_headers(ws: gspread.Worksheet):
     """Voeg ontbrekende kolommen toe."""
     headers = ws.row_values(1)
     expected = ["DossierId", "Container", "BL", "EORI", "ETA",
-                "LAST_POLL", "MRN_FOUND", "CRN", "STATUS_TSD", "EMAIL_SENT"]
+                "LAST_POLL", "MRN_FOUND", "CRN", "STATUS_TSD", "EMAIL_SENT",
+                "COLLIS", "GROSS_MASS_KG"]
     for i, name in enumerate(expected):
         col = i + 1
         if len(headers) < col or headers[i].strip() == "":
@@ -64,7 +67,7 @@ def get_all_rows(ws: gspread.Worksheet) -> list[dict]:
     for i, row in enumerate(records[1:], start=2):
         while len(row) < 8:
             row.append("")
-        while len(row) < 10:
+        while len(row) < 12:
             row.append("")
         rows.append({
             "row_index"  : i,
@@ -78,6 +81,8 @@ def get_all_rows(ws: gspread.Worksheet) -> list[dict]:
             "crn"        : row[7].strip(),   # Kolom H
             "status_tsd" : row[8],           # Kolom I
             "email_sent" : row[9].strip(),   # Kolom J
+            "collis"     : row[10].strip(),  # Kolom K
+            "gross_mass" : row[11].strip(),  # Kolom L
         })
     return [r for r in rows if r["container"]]
 
@@ -162,3 +167,14 @@ def add_dossier(ws: gspread.Worksheet, dossier_id: str, container: str, bl: str,
     row_index = len(all_values)
     log.info(f"Nieuw dossier toegevoegd: {dossier_id} / {container} op rij {row_index}")
     return row_index
+
+
+def update_row_packages(ws: gspread.Worksheet, row_index: int,
+                        packages_released: int | None,
+                        gross_mass_released: float | None):
+    """Sla collis en gewicht op in de sheet."""
+    if packages_released is not None:
+        ws.update_cell(row_index, COL["COLLIS"], packages_released)
+    if gross_mass_released is not None:
+        ws.update_cell(row_index, COL["GROSS_MASS"], gross_mass_released)
+    log.info(f"Rij {row_index}: collis={packages_released}, massa={gross_mass_released}")
