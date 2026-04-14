@@ -611,8 +611,57 @@ def _show_results(results: list):
 
     with tab6:
         if onvolledig:
-            st.warning("Vul de ontbrekende parameters aan in de Google Sheet zodat de opzoeking in NxtPort kan gebeuren.")
-            st.dataframe(onvolledig, use_container_width=True, hide_index=True, height=350)
+            st.warning("Vul de ontbrekende parameters aan zodat de opzoeking in NxtPort kan starten.")
+            for r in onvolledig:
+                with st.expander(f"✏️  {r['DossierId']} — {r['Container']}  ({r['Status']})"):
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        bl_val = st.text_input(
+                            "Bill of Lading",
+                            value=r.get("BL", "") or "",
+                            key=f"bl_{r['Container']}",
+                            placeholder="MEDUXO084545",
+                        )
+                    with col2:
+                        eori_val = st.text_input(
+                            "EORI Ship Agent",
+                            value=r.get("EORI", "") or "",
+                            key=f"eori_{r['Container']}",
+                            placeholder="BE0464255361",
+                        )
+                    with col3:
+                        eta_val = st.text_input(
+                            "ETA (DD/MM/YYYY)",
+                            value=r.get("ETA", "") or "",
+                            key=f"eta_{r['Container']}",
+                            placeholder="28/04/2026",
+                        )
+                    if st.button(f"💾 Opslaan", key=f"save_{r['Container']}"):
+                        if not bl_val.strip() or not eori_val.strip():
+                            st.error("BL en EORI zijn verplicht.")
+                        else:
+                            try:
+                                ss  = get_client()
+                                ws  = ss.worksheet("Blad1")
+                                row_idx = None
+                                # Zoek de juiste rij via container nummer
+                                all_rows = get_all_rows(ws)
+                                for row in all_rows:
+                                    if row["container"] == r["Container"]:
+                                        row_idx = row["row_index"]
+                                        break
+                                if row_idx:
+                                    from sheets_client import COL
+                                    ws.update_cell(row_idx, COL["BL"],   bl_val.strip())
+                                    ws.update_cell(row_idx, COL["EORI"], eori_val.strip())
+                                    if eta_val.strip():
+                                        ws.update_cell(row_idx, COL["ETA"], eta_val.strip())
+                                    st.success(f"✅ {r['Container']} bijgewerkt!")
+                                    st.rerun()
+                                else:
+                                    st.error("Rij niet gevonden in sheet.")
+                            except Exception as e:
+                                st.error(f"Fout: {e}")
         else:
             st.success("Alle dossiers hebben volledige parameters.")
 
