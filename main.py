@@ -562,8 +562,8 @@ def _show_results(results: list):
     vandaag     = date.today().strftime("%d/%m/%Y")
 
     actief      = [r for r in results if "Wachten" in r["Status"] or "Nieuw" in r["Status"]]
-    klaar       = [r for r in results if "MRN Gevonden" in r["Status"]]
-    klaar_oud   = [r for r in klaar if r.get("Datum/Uur", "")[:10] < vandaag]
+    klaar       = [r for r in results if "MRN Gevonden" in r["Status"] and r.get("Datum/Uur", "")[:10] >= vandaag]
+    klaar_oud   = [r for r in results if "MRN Gevonden" in r["Status"] and r.get("Datum/Uur", "")[:10] < vandaag]
     geen_crn    = [r for r in results if "Geen CRN" in r["Status"]]
     onvolledig  = [r for r in results if "onvolledig" in r["Status"]]
     eta_wacht   = [r for r in results if "📅 ETA" in r["Status"]]
