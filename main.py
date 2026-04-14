@@ -234,8 +234,8 @@ def run_poll(irp: IRPClient):
                 "Status"   : eta_status,
                 "MRN"      : "",
                 "TSD"      : row["status_tsd"],
-                "Collis"   : "",
-                "Massa(kg)": "",
+                "Collis"   : row.get("collis", ""),
+                "Massa(kg)": row.get("gross_mass", ""),
                 "Datum/Uur": row["last_poll"],
                 "ETA"      : row.get("eta", ""),
             })
@@ -278,8 +278,8 @@ def run_poll(irp: IRPClient):
                     "Status"   : f"⚠️ Parameters onvolledig ({', '.join(missing)})",
                     "MRN"      : "",
                     "TSD"      : "",
-                    "Collis"   : "",
-                    "Massa(kg)": "",
+                    "Collis"   : row.get("collis", ""),
+                    "Massa(kg)": row.get("gross_mass", ""),
                     "Datum/Uur": now_str(),
                 })
                 continue
@@ -294,8 +294,8 @@ def run_poll(irp: IRPClient):
                     "Status"   : "❓ Geen CRN in NxtPort",
                     "MRN"      : "",
                     "TSD"      : "",
-                    "Collis"   : "",
-                    "Massa(kg)": "",
+                    "Collis"   : row.get("collis", ""),
+                    "Massa(kg)": row.get("gross_mass", ""),
                     "Datum/Uur": now_str(),
                 })
                 continue
@@ -317,8 +317,8 @@ def run_poll(irp: IRPClient):
                     "Status"   : "✅ MRN Gevonden",
                     "MRN"      : tsd.mrn,
                     "TSD"      : tsd.status_tsd,
-                    "Collis"   : "",
-                    "Massa(kg)": "",
+                    "Collis"   : row.get("collis", ""),
+                    "Massa(kg)": row.get("gross_mass", ""),
                     "Datum/Uur": now_str(),
                 })
             else:
@@ -329,8 +329,8 @@ def run_poll(irp: IRPClient):
                     "Status"   : "🟡 Wachten",
                     "MRN"      : "",
                     "TSD"      : status,
-                    "Collis"   : "",
-                    "Massa(kg)": "",
+                    "Collis"   : row.get("collis", ""),
+                    "Massa(kg)": row.get("gross_mass", ""),
                     "Datum/Uur": now_str(),
                 })
                 stats["no_mrn_yet"] += 1
@@ -348,8 +348,8 @@ def run_poll(irp: IRPClient):
                 "Status"   : "❌ API fout",
                 "MRN"      : "",
                 "TSD"      : "",
-                "Collis"   : "",
-                "Massa(kg)": "",
+                "Collis"   : row.get("collis", ""),
+                "Massa(kg)": row.get("gross_mass", ""),
                 "Datum/Uur": now_str(),
             })
             continue
@@ -366,8 +366,8 @@ def run_poll(irp: IRPClient):
                 "Status"   : "✅ MRN Gevonden",
                 "MRN"      : tsd.mrn,
                 "TSD"      : tsd.status_tsd,
-                "Collis"   : "",
-                "Massa(kg)": "",
+                "Collis"   : row.get("collis", ""),
+                "Massa(kg)": row.get("gross_mass", ""),
                 "Datum/Uur": now_str(),
             })
         else:
@@ -381,8 +381,8 @@ def run_poll(irp: IRPClient):
                 "Status"   : "🟡 Wachten",
                 "MRN"      : "",
                 "TSD"      : tsd.status_tsd,
-                "Collis"   : "",
-                "Massa(kg)": "",
+                "Collis"   : row.get("collis", ""),
+                "Massa(kg)": row.get("gross_mass", ""),
                 "Datum/Uur": now_str(),
             })
 
