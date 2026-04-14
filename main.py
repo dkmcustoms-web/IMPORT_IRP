@@ -446,6 +446,13 @@ def show_dashboard():
             st.session_state["page"] = "nieuw"
             st.rerun()
         st.markdown("---")
+
+        # Auto-refresh toggle
+        auto = st.toggle("⏱️ Auto-refresh (60 min)", value=st.session_state.get("auto_refresh", False))
+        st.session_state["auto_refresh"] = auto
+        if auto:
+            st.caption("🟢 Volgende refresh over 60 min")
+        st.markdown("---")
         sidebar_stats = st.container()
         st.markdown("---")
         if st.button("🔑 Nieuwe sessie invoeren", use_container_width=True):
@@ -459,6 +466,23 @@ def show_dashboard():
 
     # ── Hoofdpagina ───────────────────────────────────────────────────────────
     st.title("🚢 DKM Import Dashboard")
+
+    # Auto-refresh elke 60 minuten
+    if st.session_state.get("auto_refresh"):
+        import time as _time
+        last = st.session_state.get("last_auto_poll", 0)
+        now  = _time.time()
+        remaining = max(0, 3600 - int(now - last))
+        mins, secs = divmod(remaining, 60)
+        if remaining == 0:
+            st.session_state["last_auto_poll"] = now
+            st.session_state["run_poll"] = True
+        else:
+            # Refresh de pagina elke 60 seconden om countdown bij te werken
+            st.markdown(
+                f'<meta http-equiv="refresh" content="60">',
+                unsafe_allow_html=True
+            )
 
     if st.session_state.get("run_poll"):
         st.session_state.pop("run_poll", None)
