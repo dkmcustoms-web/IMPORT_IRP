@@ -322,6 +322,7 @@ def run_poll(irp: IRPClient):
                     "Datum/Uur": now_str(),
                 })
             else:
+                update_row_packages(ws, row["row_index"], tsd.packages_released if tsd else None, tsd.gross_mass_released if tsd else None)
                 results.append({
                     "DossierId": row["dossier_id"],
                     "Container": container,
