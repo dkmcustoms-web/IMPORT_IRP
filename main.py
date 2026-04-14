@@ -514,6 +514,8 @@ def show_dashboard():
                 results = [{
                     "DossierId": r["dossier_id"],
                     "Container": r["container"],
+                    "BL"       : r["bl"],
+                    "EORI"     : r["eori"],
                     "CRN"      : r["crn"],
                     "Status"   : _status(r),
                     "MRN"      : r["mrn_found"],
@@ -618,21 +620,21 @@ def _show_results(results: list):
                     with col1:
                         bl_val = st.text_input(
                             "Bill of Lading",
-                            value=r.get("BL", "") or "",
+                            value=r.get("BL") or r.get("bl") or "",
                             key=f"bl_{r['Container']}",
                             placeholder="MEDUXO084545",
                         )
                     with col2:
                         eori_val = st.text_input(
                             "EORI Ship Agent",
-                            value=r.get("EORI", "") or "",
+                            value=r.get("EORI") or r.get("eori") or "",
                             key=f"eori_{r['Container']}",
                             placeholder="BE0464255361",
                         )
                     with col3:
                         eta_val = st.text_input(
                             "ETA (DD/MM/YYYY)",
-                            value=r.get("ETA", "") or "",
+                            value=r.get("ETA") or r.get("eta") or "",
                             key=f"eta_{r['Container']}",
                             placeholder="28/04/2026",
                         )
