@@ -4,11 +4,13 @@ Credentials via st.secrets["gcp_service_account"]
 """
 
 import logging
+import time
 from datetime import datetime, timezone
 
 import gspread
 import streamlit as st
 from google.oauth2.service_account import Credentials
+from gspread.exceptions import APIError
 
 log = logging.getLogger(__name__)
 
@@ -32,6 +34,34 @@ COL = {
 
 def now_str() -> str:
     return datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M")
+
+
+def _col_letter(col_num: int) -> str:
+    """1 → A, 7 → G, 27 → AA, etc."""
+    result = ""
+    while col_num > 0:
+        col_num, remainder = divmod(col_num - 1, 26)
+        result = chr(65 + remainder) + result
+    return result
+
+
+def _with_retry(fn, *args, tries: int = 5, **kwargs):
+    """Retry wrapper voor gspread calls die 429 kunnen raken."""
+    last_exc = None
+    for i in range(tries):
+        try:
+            return fn(*args, **kwargs)
+        except APIError as e:
+            status = getattr(e.response, "status_code", None)
+            last_exc = e
+            if status == 429 and i < tries - 1:
+                wait = 2 ** i  # 1, 2, 4, 8s
+                log.warning(f"Rate limit (429) — retry over {wait}s ({i+1}/{tries})")
+                time.sleep(wait)
+                continue
+            raise
+    if last_exc:
+        raise last_exc
 
 
 def get_client() -> gspread.Spreadsheet:
@@ -86,18 +116,20 @@ def get_all_rows(ws: gspread.Worksheet) -> list[dict]:
     return rows
 
 
+# ── Bestaande per-rij functies (behouden voor backwards compat) ───────────────
+
 def update_row_crn(ws: gspread.Worksheet, row_index: int, crn: str, status_tsd: str):
-    ws.update_cell(row_index, COL["CRN"], crn)
-    ws.update_cell(row_index, COL["STATUS_TSD"], status_tsd)
-    ws.update_cell(row_index, COL["LAST_POLL"], now_str())
+    _with_retry(ws.update_cell, row_index, COL["CRN"], crn)
+    _with_retry(ws.update_cell, row_index, COL["STATUS_TSD"], status_tsd)
+    _with_retry(ws.update_cell, row_index, COL["LAST_POLL"], now_str())
     log.info(f"Rij {row_index}: CRN={crn}")
 
 
 def update_row_mrn(ws: gspread.Worksheet, row_index: int, mrn: str, status_tsd: str):
-    ws.update_cell(row_index, COL["MRN_FOUND"], mrn)
-    ws.update_cell(row_index, COL["STATUS_TSD"], status_tsd)
-    ws.update_cell(row_index, COL["LAST_POLL"], now_str())
-    ws.format(f"G{row_index}", {
+    _with_retry(ws.update_cell, row_index, COL["MRN_FOUND"], mrn)
+    _with_retry(ws.update_cell, row_index, COL["STATUS_TSD"], status_tsd)
+    _with_retry(ws.update_cell, row_index, COL["LAST_POLL"], now_str())
+    _with_retry(ws.format, f"G{row_index}", {
         "backgroundColor": {"red": 0.72, "green": 0.96, "blue": 0.72},
         "textFormat": {"bold": True},
     })
@@ -105,8 +137,8 @@ def update_row_mrn(ws: gspread.Worksheet, row_index: int, mrn: str, status_tsd: 
 
 
 def update_row_poll(ws: gspread.Worksheet, row_index: int, status_tsd: str):
-    ws.update_cell(row_index, COL["LAST_POLL"], now_str())
-    ws.update_cell(row_index, COL["STATUS_TSD"], status_tsd)
+    _with_retry(ws.update_cell, row_index, COL["LAST_POLL"], now_str())
+    _with_retry(ws.update_cell, row_index, COL["STATUS_TSD"], status_tsd)
 
 
 def update_row_packages(ws: gspread.Worksheet, row_index: int,
@@ -114,14 +146,14 @@ def update_row_packages(ws: gspread.Worksheet, row_index: int,
                         gross_mass: float | None):
     """Sla collis en gewicht op."""
     if packages is not None:
-        ws.update_cell(row_index, COL["COLLIS"], packages)
+        _with_retry(ws.update_cell, row_index, COL["COLLIS"], packages)
     if gross_mass is not None:
-        ws.update_cell(row_index, COL["GROSS_MASS"], gross_mass)
+        _with_retry(ws.update_cell, row_index, COL["GROSS_MASS"], gross_mass)
     log.info(f"Rij {row_index}: collis={packages}, massa={gross_mass}")
 
 
 def mark_email_sent(ws: gspread.Worksheet, row_index: int):
-    ws.update_cell(row_index, COL["EMAIL_SENT"], "✓")
+    _with_retry(ws.update_cell, row_index, COL["EMAIL_SENT"], "✓")
     log.info(f"Email gestuurd gemarkeerd voor rij {row_index}")
 
 
@@ -129,12 +161,106 @@ def add_dossier(ws: gspread.Worksheet, dossier_id: str, container: str,
                 bl: str, eori: str, eta: str = "") -> int:
     """Voeg een nieuw dossier toe. Geeft rijnummer terug."""
     new_row = [dossier_id, container, bl, eori, eta, "", "", "", "", "", "", ""]
-    ws.append_row(new_row, value_input_option="USER_ENTERED")
+    _with_retry(ws.append_row, new_row, value_input_option="USER_ENTERED")
     all_values = ws.get_all_values()
     row_index = len(all_values)
     log.info(f"Nieuw dossier: {dossier_id} / {container} op rij {row_index}")
     return row_index
 
+
+# ── Batch updater — gebruikt door run_poll ────────────────────────────────────
+
+class BatchUpdater:
+    """
+    Accumuleert cel-updates en formatting en flusht ze in 2 batch-calls
+    (1 voor values, 1 voor formatting) — ipv N×update_cell per rij.
+    Voorkomt Google Sheets 429 rate limit fouten.
+    """
+
+    def __init__(self, ws: gspread.Worksheet):
+        self.ws              = ws
+        self.values          = []   # [{"range": "G5", "values": [["..."]]}]
+        self.format_requests = []   # spreadsheet.batch_update request objects
+        self._queued_rows    = set()  # voor debugging
+
+    def _add_value(self, row_index: int, col_num: int, value):
+        if value is None:
+            value = ""
+        letter = _col_letter(col_num)
+        self.values.append({
+            "range" : f"{letter}{row_index}",
+            "values": [[value]],
+        })
+        self._queued_rows.add(row_index)
+
+    def queue_crn(self, row_index: int, crn: str, status_tsd: str):
+        self._add_value(row_index, COL["CRN"],        crn)
+        self._add_value(row_index, COL["STATUS_TSD"], status_tsd)
+        self._add_value(row_index, COL["LAST_POLL"],  now_str())
+
+    def queue_mrn(self, row_index: int, mrn: str, status_tsd: str):
+        self._add_value(row_index, COL["MRN_FOUND"],  mrn)
+        self._add_value(row_index, COL["STATUS_TSD"], status_tsd)
+        self._add_value(row_index, COL["LAST_POLL"],  now_str())
+        # Groene achtergrond + bold op MRN cel
+        self.format_requests.append({
+            "repeatCell": {
+                "range": {
+                    "sheetId"          : self.ws.id,
+                    "startRowIndex"    : row_index - 1,
+                    "endRowIndex"      : row_index,
+                    "startColumnIndex" : COL["MRN_FOUND"] - 1,
+                    "endColumnIndex"   : COL["MRN_FOUND"],
+                },
+                "cell": {
+                    "userEnteredFormat": {
+                        "backgroundColor": {"red": 0.72, "green": 0.96, "blue": 0.72},
+                        "textFormat"     : {"bold": True},
+                    }
+                },
+                "fields": "userEnteredFormat(backgroundColor,textFormat)",
+            }
+        })
+
+    def queue_poll(self, row_index: int, status_tsd: str):
+        self._add_value(row_index, COL["LAST_POLL"],  now_str())
+        self._add_value(row_index, COL["STATUS_TSD"], status_tsd)
+
+    def queue_packages(self, row_index: int,
+                       packages: int | None,
+                       gross_mass: float | None):
+        if packages is not None:
+            self._add_value(row_index, COL["COLLIS"],     packages)
+        if gross_mass is not None:
+            self._add_value(row_index, COL["GROSS_MASS"], gross_mass)
+
+    def queue_email_sent(self, row_index: int):
+        self._add_value(row_index, COL["EMAIL_SENT"], "✓")
+
+    def pending_count(self) -> int:
+        return len(self.values) + len(self.format_requests)
+
+    def flush(self):
+        """Voer alle opgestapelde updates uit in 2 batch-calls."""
+        if self.values:
+            _with_retry(
+                self.ws.batch_update,
+                self.values,
+                value_input_option="USER_ENTERED",
+            )
+            log.info(f"Batch flush: {len(self.values)} value updates over {len(self._queued_rows)} rijen")
+            self.values = []
+        if self.format_requests:
+            _with_retry(
+                self.ws.spreadsheet.batch_update,
+                {"requests": self.format_requests},
+            )
+            log.info(f"Batch flush: {len(self.format_requests)} format updates")
+            self.format_requests = []
+        self._queued_rows.clear()
+
+
+# ── Cookie opslag in Config tabblad ───────────────────────────────────────────
 
 def save_cookie(cookie_str: str):
     """Sla cookie op in Config tabblad (gesplitst in 2 cellen)."""

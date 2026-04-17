@@ -20,6 +20,7 @@ from sheets_client import (
     mark_email_sent,
     add_dossier,
     update_row_packages,
+    BatchUpdater,
 )
 from email_client import send_mrn_notification
 
@@ -207,13 +208,17 @@ def _save_and_login(cookie_str: str):
 
 # ── Polling logica ────────────────────────────────────────────────────────────
 def run_poll(irp: IRPClient, stale_only: bool = False):
+    """
+    Batched versie: alle cel-updates worden in een BatchUpdater opgestapeld
+    en in 2 API-calls geflusht aan het einde, ipv N×update_cell per rij.
+    Voorkomt Google Sheets 429 rate limit.
+    """
     ss       = get_client()
     ws       = ss.worksheet("Blad1")
     ensure_headers(ws)
     all_rows = get_all_rows(ws)
 
     if stale_only:
-        from datetime import datetime, timezone
         now = datetime.now(timezone.utc)
         def is_stale(row):
             if not row["crn"] or not row["last_poll"]:
@@ -233,68 +238,147 @@ def run_poll(irp: IRPClient, stale_only: bool = False):
 
     stats   = {"skipped": 0, "crn_found": 0, "mrn_found": 0, "no_mrn_yet": 0, "errors": 0}
     results = []
+    batcher = BatchUpdater(ws)
+    pending_emails = []   # [(row, container, crn, mrn, status_tsd)]
+
     progress = st.progress(0, text="Bezig...")
 
-    for i, row in enumerate(rows):
-        progress.progress((i + 1) / max(len(rows), 1), text=f"Verwerken: {row['container']}")
-        container = row["container"]
-        bl        = row["bl"]
-        crn       = row["crn"]
-        mrn       = row["mrn_found"]
+    try:
+        for i, row in enumerate(rows):
+            progress.progress((i + 1) / max(len(rows), 1), text=f"Verwerken: {row['container']}")
+            container = row["container"]
+            bl        = row["bl"]
+            crn       = row["crn"]
+            mrn       = row["mrn_found"]
 
-        # ETA check → overslaan als ETA meer dan 7 dagen in de toekomst
-        poll_ok, eta_status = should_poll(row)
-        if not poll_ok:
-            stats["skipped"] += 1
-            results.append({
-                "DossierId": row["dossier_id"],
-                "Container": container,
-                "CRN"      : crn,
-                "Status"   : eta_status,
-                "MRN"      : "",
-                "TSD"      : row["status_tsd"],
-                "Collis"   : row.get("collis", ""),
-                "Massa(kg)": row.get("gross_mass", ""),
-                "Datum/Uur": row["last_poll"],
-                "ETA"      : row.get("eta", ""),
-            })
-            continue
-
-        # MRN al gevonden → overslaan, datum NIET updaten, geen poll nodig
-        if mrn and mrn.strip():
-            stats["skipped"] += 1
-            log.info(f"[SKIP] {container} — MRN al gevonden: {mrn}, geen poll nodig")
-            # Check of email al verstuurd — zo niet, alsnog sturen
-            if row.get("email_sent") != "✓":
-                log.info(f"[EMAIL] {container} — MRN gekend maar email nog niet verstuurd")
-                _send_mrn_email(ws, row, container, crn, mrn, row["status_tsd"])
-            results.append({
-                "DossierId": row["dossier_id"],
-                "Container": container,
-                "CRN"      : crn,
-                "Status"   : "✅ MRN Gevonden",
-                "MRN"      : mrn,
-                "TSD"      : row["status_tsd"],
-                "Collis"   : row.get("collis", ""),
-                "Massa(kg)": row.get("gross_mass", ""),
-                "Datum/Uur": row["last_poll"],
-            })
-            continue
-
-        time.sleep(API_DELAY)
-
-        if not crn:
-            # Check eerst of parameters volledig zijn
-            if not bl or not row["eori"]:
-                stats["errors"] += 1
-                missing = []
-                if not bl: missing.append("BL")
-                if not row["eori"]: missing.append("EORI")
+            # ETA check → overslaan als ETA meer dan 7 dagen in de toekomst
+            poll_ok, eta_status = should_poll(row)
+            if not poll_ok:
+                stats["skipped"] += 1
                 results.append({
                     "DossierId": row["dossier_id"],
                     "Container": container,
-                    "CRN"      : "",
-                    "Status"   : f"⚠️ Parameters onvolledig ({', '.join(missing)})",
+                    "CRN"      : crn,
+                    "Status"   : eta_status,
+                    "MRN"      : "",
+                    "TSD"      : row["status_tsd"],
+                    "Collis"   : row.get("collis", ""),
+                    "Massa(kg)": row.get("gross_mass", ""),
+                    "Datum/Uur": row["last_poll"],
+                    "ETA"      : row.get("eta", ""),
+                })
+                continue
+
+            # MRN al gevonden → overslaan, geen poll nodig
+            if mrn and mrn.strip():
+                stats["skipped"] += 1
+                log.info(f"[SKIP] {container} — MRN al gevonden: {mrn}")
+                # Check of email al verstuurd — zo niet, toevoegen aan pending
+                if row.get("email_sent") != "✓":
+                    log.info(f"[EMAIL] {container} — MRN gekend maar email nog niet verstuurd")
+                    pending_emails.append((row, container, crn, mrn, row["status_tsd"]))
+                results.append({
+                    "DossierId": row["dossier_id"],
+                    "Container": container,
+                    "CRN"      : crn,
+                    "Status"   : "✅ MRN Gevonden",
+                    "MRN"      : mrn,
+                    "TSD"      : row["status_tsd"],
+                    "Collis"   : row.get("collis", ""),
+                    "Massa(kg)": row.get("gross_mass", ""),
+                    "Datum/Uur": row["last_poll"],
+                })
+                continue
+
+            time.sleep(API_DELAY)
+
+            if not crn:
+                # Check eerst of parameters volledig zijn
+                if not bl or not row["eori"]:
+                    stats["errors"] += 1
+                    missing = []
+                    if not bl: missing.append("BL")
+                    if not row["eori"]: missing.append("EORI")
+                    results.append({
+                        "DossierId": row["dossier_id"],
+                        "Container": container,
+                        "CRN"      : "",
+                        "Status"   : f"⚠️ Parameters onvolledig ({', '.join(missing)})",
+                        "MRN"      : "",
+                        "TSD"      : "",
+                        "Collis"   : row.get("collis", ""),
+                        "Massa(kg)": row.get("gross_mass", ""),
+                        "Datum/Uur": now_str(),
+                    })
+                    continue
+
+                crn_result = irp.get_crn_from_bl(bl, container=container, eori=row["eori"])
+                if not crn_result:
+                    stats["errors"] += 1
+                    results.append({
+                        "DossierId": row["dossier_id"],
+                        "Container": container,
+                        "CRN"      : "",
+                        "Status"   : "❓ Geen CRN in NxtPort",
+                        "MRN"      : "",
+                        "TSD"      : "",
+                        "Collis"   : row.get("collis", ""),
+                        "Massa(kg)": row.get("gross_mass", ""),
+                        "Datum/Uur": now_str(),
+                    })
+                    continue
+                crn    = crn_result
+                tsd    = irp.get_tsd_information(crn)  # Altijd write-off ophalen voor nieuwe CRN
+                status = tsd.status_tsd if tsd else ""
+                batcher.queue_crn(row["row_index"], crn, status)
+                stats["crn_found"] += 1
+
+                if tsd and tsd.mrn:
+                    batcher.queue_mrn(row["row_index"], tsd.mrn, tsd.status_tsd)
+                    batcher.queue_packages(row["row_index"], tsd.packages_released, tsd.gross_mass_released)
+                    stats["mrn_found"] += 1
+                    pending_emails.append((row, container, crn, tsd.mrn, tsd.status_tsd))
+                    results.append({
+                        "DossierId": row["dossier_id"],
+                        "Container": container,
+                        "CRN"      : crn,
+                        "Status"   : "✅ MRN Gevonden",
+                        "MRN"      : tsd.mrn,
+                        "TSD"      : tsd.status_tsd,
+                        "Collis"   : row.get("collis", ""),
+                        "Massa(kg)": row.get("gross_mass", ""),
+                        "Datum/Uur": now_str(),
+                    })
+                else:
+                    batcher.queue_packages(
+                        row["row_index"],
+                        tsd.packages_released if tsd else None,
+                        tsd.gross_mass_released if tsd else None,
+                    )
+                    results.append({
+                        "DossierId": row["dossier_id"],
+                        "Container": container,
+                        "CRN"      : crn,
+                        "Status"   : "🟡 Wachten",
+                        "MRN"      : "",
+                        "TSD"      : status,
+                        "Collis"   : row.get("collis", ""),
+                        "Massa(kg)": row.get("gross_mass", ""),
+                        "Datum/Uur": now_str(),
+                    })
+                    stats["no_mrn_yet"] += 1
+                continue
+
+            # Skip write-off als collis al ingevuld in sheet
+            collis_known = bool(row.get("collis") and row["collis"].strip())
+            tsd = irp.get_tsd_information(crn, skip_writeoff=collis_known)
+            if not tsd:
+                stats["errors"] += 1
+                results.append({
+                    "DossierId": row["dossier_id"],
+                    "Container": container,
+                    "CRN"      : crn,
+                    "Status"   : "❌ API fout",
                     "MRN"      : "",
                     "TSD"      : "",
                     "Collis"   : row.get("collis", ""),
@@ -303,32 +387,11 @@ def run_poll(irp: IRPClient, stale_only: bool = False):
                 })
                 continue
 
-            crn_result = irp.get_crn_from_bl(bl, container=container, eori=row["eori"])
-            if not crn_result:
-                stats["errors"] += 1
-                results.append({
-                    "DossierId": row["dossier_id"],
-                    "Container": container,
-                    "CRN"      : "",
-                    "Status"   : "❓ Geen CRN in NxtPort",
-                    "MRN"      : "",
-                    "TSD"      : "",
-                    "Collis"   : row.get("collis", ""),
-                    "Massa(kg)": row.get("gross_mass", ""),
-                    "Datum/Uur": now_str(),
-                })
-                continue
-            crn    = crn_result
-            tsd    = irp.get_tsd_information(crn)  # Altijd write-off ophalen voor nieuwe CRN
-            status = tsd.status_tsd if tsd else ""
-            update_row_crn(ws, row["row_index"], crn, status)
-            stats["crn_found"] += 1
-
-            if tsd and tsd.mrn:
-                update_row_mrn(ws, row["row_index"], tsd.mrn, tsd.status_tsd)
-                update_row_packages(ws, row["row_index"], tsd.packages_released, tsd.gross_mass_released)
+            if tsd.mrn:
+                batcher.queue_mrn(row["row_index"], tsd.mrn, tsd.status_tsd)
+                batcher.queue_packages(row["row_index"], tsd.packages_released, tsd.gross_mass_released)
                 stats["mrn_found"] += 1
-                _send_mrn_email(ws, row, container, crn, tsd.mrn, tsd.status_tsd)
+                pending_emails.append((row, container, crn, tsd.mrn, tsd.status_tsd))
                 results.append({
                     "DossierId": row["dossier_id"],
                     "Container": container,
@@ -341,72 +404,37 @@ def run_poll(irp: IRPClient, stale_only: bool = False):
                     "Datum/Uur": now_str(),
                 })
             else:
-                update_row_packages(ws, row["row_index"], tsd.packages_released if tsd else None, tsd.gross_mass_released if tsd else None)
+                batcher.queue_poll(row["row_index"], tsd.status_tsd)
+                batcher.queue_packages(row["row_index"], tsd.packages_released, tsd.gross_mass_released)
+                stats["no_mrn_yet"] += 1
                 results.append({
                     "DossierId": row["dossier_id"],
                     "Container": container,
                     "CRN"      : crn,
                     "Status"   : "🟡 Wachten",
                     "MRN"      : "",
-                    "TSD"      : status,
+                    "TSD"      : tsd.status_tsd,
                     "Collis"   : row.get("collis", ""),
                     "Massa(kg)": row.get("gross_mass", ""),
                     "Datum/Uur": now_str(),
                 })
-                stats["no_mrn_yet"] += 1
-            continue
-
-        # Skip write-off als collis al ingevuld in sheet
-        collis_known = bool(row.get("collis") and row["collis"].strip())
-        tsd = irp.get_tsd_information(crn, skip_writeoff=collis_known)
-        if not tsd:
-            stats["errors"] += 1
-            results.append({
-                "DossierId": row["dossier_id"],
-                "Container": container,
-                "CRN"      : crn,
-                "Status"   : "❌ API fout",
-                "MRN"      : "",
-                "TSD"      : "",
-                "Collis"   : row.get("collis", ""),
-                "Massa(kg)": row.get("gross_mass", ""),
-                "Datum/Uur": now_str(),
-            })
-            continue
-
-        if tsd.mrn:
-            update_row_mrn(ws, row["row_index"], tsd.mrn, tsd.status_tsd)
-            update_row_packages(ws, row["row_index"], tsd.packages_released, tsd.gross_mass_released)
-            stats["mrn_found"] += 1
-            _send_mrn_email(ws, row, container, crn, tsd.mrn, tsd.status_tsd)
-            results.append({
-                "DossierId": row["dossier_id"],
-                "Container": container,
-                "CRN"      : crn,
-                "Status"   : "✅ MRN Gevonden",
-                "MRN"      : tsd.mrn,
-                "TSD"      : tsd.status_tsd,
-                "Collis"   : row.get("collis", ""),
-                "Massa(kg)": row.get("gross_mass", ""),
-                "Datum/Uur": now_str(),
-            })
-        else:
-            update_row_poll(ws, row["row_index"], tsd.status_tsd)
-            update_row_packages(ws, row["row_index"], tsd.packages_released, tsd.gross_mass_released)
-            stats["no_mrn_yet"] += 1
-            results.append({
-                "DossierId": row["dossier_id"],
-                "Container": container,
-                "CRN"      : crn,
-                "Status"   : "🟡 Wachten",
-                "MRN"      : "",
-                "TSD"      : tsd.status_tsd,
-                "Collis"   : row.get("collis", ""),
-                "Massa(kg)": row.get("gross_mass", ""),
-                "Datum/Uur": now_str(),
-            })
+    finally:
+        # Flush de batcher zelfs als er midden in de loop een exception is
+        try:
+            if batcher.pending_count() > 0:
+                log.info(f"Flushen van {batcher.pending_count()} updates naar Google Sheets...")
+                batcher.flush()
+        except Exception as e:
+            log.error(f"Batch flush mislukt: {e}")
+            st.error(f"⚠️ Sheet updates mislukt: {e}")
 
     progress.empty()
+
+    # Verstuur emails NA de batch flush — zo is de sheet consistent met de mailbox
+    if pending_emails:
+        log.info(f"Versturen van {len(pending_emails)} MRN notificatie(s)...")
+        for row, container, crn, mrn, status_tsd in pending_emails:
+            _send_mrn_email(ws, row, container, crn, mrn, status_tsd)
 
     # Herlaad alle rows voor volledige display (ook niet-gepollde)
     if stale_only:
@@ -423,7 +451,6 @@ def run_poll(irp: IRPClient, stale_only: bool = False):
                         break
             else:
                 # Niet gepolled - toon vanuit sheet
-                from datetime import date
                 def _st(row):
                     if row["mrn_found"]: return "✅ MRN Gevonden"
                     poll_ok, eta_st = should_poll(row)
@@ -627,7 +654,10 @@ def show_dashboard():
 
 
 def _send_mrn_email(ws, row: dict, container: str, crn: str, mrn: str, status_tsd: str):
-    """Stuur MRN notificatie email — max 1x per container."""
+    """Stuur MRN notificatie email — max 1x per container.
+    email_sent markering gebeurt via mark_email_sent (met retry) — niet via batcher,
+    want email success is kritiek om dubbele mails te voorkomen bij flush-fouten.
+    """
     if row.get("email_sent") == "✓":
         log.info(f"Email al verstuurd voor {container} — overgeslagen")
         return
@@ -640,8 +670,11 @@ def _send_mrn_email(ws, row: dict, container: str, crn: str, mrn: str, status_ts
         status_tsd = status_tsd,
     )
     if ok:
-        mark_email_sent(ws, row["row_index"])
-        log.info(f"MRN email verstuurd voor {container}")
+        try:
+            mark_email_sent(ws, row["row_index"])
+            log.info(f"MRN email verstuurd voor {container}")
+        except Exception as e:
+            log.error(f"Email verstuurd voor {container} maar markering mislukt: {e}")
     else:
         log.error(f"E-mail versturen mislukt voor {container}")
 
